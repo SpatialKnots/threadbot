@@ -1,0 +1,2 @@
+"""VK ingestion package."""
+

@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+*.log
+threads.db
+.pytest_cache/
+data/fetch_checkpoint*.json
+data/faiss/
+data/images/*
+!data/images/.gitkeep
