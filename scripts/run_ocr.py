@@ -22,6 +22,18 @@ def _join_ocr_chunks(chunks: list[str]) -> str:
     return "\n\n".join(chunk.strip() for chunk in chunks if chunk.strip()).strip()
 
 
+def _save_ocr_chunks(posts_by_id, recognized_by_post: dict[int, list[str]], force: bool) -> None:
+    for post_id, chunks in recognized_by_post.items():
+        joined = _join_ocr_chunks(chunks)
+        if not joined:
+            continue
+        if force:
+            posts_by_id[post_id].ocr_text = joined
+        else:
+            posts_by_id[post_id].ocr_text = _join_ocr_chunks([posts_by_id[post_id].ocr_text, joined])
+    recognized_by_post.clear()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run OCR for saved images.")
     parser.add_argument("--limit", type=int, default=100, help="Maximum number of images to process. Use 0 for no limit.")
@@ -30,6 +42,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Run OCR and log results without writing to the database.")
     parser.add_argument("--lang", default="rus+eng", help="Tesseract language list, for example rus+eng.")
     parser.add_argument("--psm", type=int, default=6, help="Tesseract page segmentation mode.")
+    parser.add_argument("--commit-every", type=int, default=100, help="Commit recognized OCR chunks every N images.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -60,19 +73,19 @@ def main() -> None:
                 empty_images += 1
                 logger.info("OCR extracted no text from image id=%s.", image.id)
 
-        if not args.dry_run:
-            posts_by_id = {image.post_id: image.post for image in images}
-            for post_id, chunks in recognized_by_post.items():
-                joined = _join_ocr_chunks(chunks)
-                if not joined:
-                    continue
-                if args.force:
-                    posts_by_id[post_id].ocr_text = joined
-                else:
-                    posts_by_id[post_id].ocr_text = _join_ocr_chunks([posts_by_id[post_id].ocr_text, joined])
-            session.commit()
-        else:
+            processed_images = recognized_images + empty_images + failed_images
+            if not args.dry_run and args.commit_every > 0 and processed_images % args.commit_every == 0:
+                posts_by_id = {selected_image.post_id: selected_image.post for selected_image in images}
+                _save_ocr_chunks(posts_by_id, recognized_by_post, args.force)
+                session.commit()
+                logger.info("Committed OCR progress after %d processed image(s).", processed_images)
+
+        if args.dry_run:
             session.rollback()
+        else:
+            posts_by_id = {image.post_id: image.post for image in images}
+            _save_ocr_chunks(posts_by_id, recognized_by_post, args.force)
+            session.commit()
 
         logger.info(
             "OCR summary: selected=%d recognized=%d empty=%d failed=%d dry_run=%s",
