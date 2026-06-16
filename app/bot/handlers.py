@@ -9,11 +9,11 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 
 from app.bot.formatting import format_ocr_debug_messages, format_post_caption
-from app.bot.keyboards import result_keyboard
+from app.bot.keyboards import main_reply_keyboard, result_keyboard
 from app.check_updates import CheckResult, check_for_new_threads
 from app.config import get_settings
 from app.db.models import Post
-from app.db.repositories import add_search_query, get_latest_posts, get_random_post, search_posts
+from app.db.repositories import add_search_query, get_latest_posts, get_random_post, get_search_query, search_posts
 from app.db.session import get_session
 from app.twoch.originals import extract_2ch_post_numbers, find_original_from_text
 
@@ -31,6 +31,16 @@ class SearchState:
 
 
 user_search_state: dict[int, SearchState] = {}
+WELCOME_TEXT = (
+    "Thread Search Bot\n\n"
+    "Send any phrase to search saved VK thread images by post text and OCR text.\n\n"
+    "Available commands:\n"
+    "/search query - search explicitly\n"
+    "/random - random saved thread\n"
+    "/latest - latest saved threads\n"
+    "/check - import new VK posts\n"
+    "/help - short help"
+)
 
 
 def _format_check_result(result: CheckResult) -> str:
@@ -76,10 +86,9 @@ async def _ensure_original_url(post: Post) -> str:
 
 
 async def _send_post(message: Message, post: Post, index: int = 0, total: int = 1, query_id: int = 0) -> None:
-    await _ensure_original_url(post)
     caption = format_post_caption(post, index=index, total=total)
     image_paths = _post_image_paths(post)
-    keyboard = result_keyboard(query_id, index, total, post.vk_url, original_url=post.original_url)
+    keyboard = result_keyboard(query_id, index, total, post.vk_url, post_id=post.id, original_url=post.original_url)
     if len(image_paths) == 1:
         await message.answer_photo(FSInputFile(image_paths[0]), caption=caption, reply_markup=keyboard)
     elif image_paths:
@@ -91,16 +100,15 @@ async def _send_post(message: Message, post: Post, index: int = 0, total: int = 
         await message.answer("Actions", reply_markup=keyboard)
     else:
         await message.answer(caption, reply_markup=keyboard)
-    for ocr_message in format_ocr_debug_messages(post):
-        await message.answer(ocr_message)
+
+
+async def _send_welcome(message: Message) -> None:
+    await message.answer(WELCOME_TEXT, reply_markup=main_reply_keyboard())
 
 
 @router.message(Command("start"))
 async def start(message: Message) -> None:
-    await message.answer(
-        "Hi. Send any search query, and I will look for saved VK thread images.\n"
-        "Commands: /search, /random, /latest, /check, /help."
-    )
+    await _send_welcome(message)
 
 
 @router.message(Command("help"))
@@ -165,6 +173,9 @@ async def search_command(message: Message) -> None:
 async def text_message(message: Message) -> None:
     if not message.text:
         return
+    if message.text.strip().upper() == "START":
+        await _send_welcome(message)
+        return
     await handle_text_search(message, message.text)
 
 
@@ -190,6 +201,30 @@ async def random_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@router.callback_query(lambda callback: bool(callback.data and callback.data.startswith("ocr:")))
+async def image_to_text_callback(callback: CallbackQuery) -> None:
+    if callback.message is None or callback.data is None:
+        return
+    parts = callback.data.split(":")
+    if len(parts) != 2:
+        await callback.answer("Bad callback data.")
+        return
+    try:
+        post_id = int(parts[1])
+    except ValueError:
+        await callback.answer("Bad callback data.")
+        return
+
+    with get_session() as session:
+        post = session.get(Post, post_id)
+        if post is None:
+            await callback.answer("Post is no longer available.")
+            return
+        for ocr_message in format_ocr_debug_messages(post):
+            await callback.message.answer(ocr_message)
+    await callback.answer()
+
+
 @router.callback_query(lambda callback: bool(callback.data and callback.data.startswith("result:")))
 async def result_callback(callback: CallbackQuery) -> None:
     if callback.message is None or callback.from_user is None or callback.data is None:
@@ -205,15 +240,22 @@ async def result_callback(callback: CallbackQuery) -> None:
         await callback.answer("Bad callback data.")
         return
 
-    state = user_search_state.get(callback.from_user.id)
-    if state is None or state.query_id != query_id:
-        await callback.answer("Search state expired. Send the query again.")
-        return
-    if index < 0 or index >= len(state.results):
-        await callback.answer("No such result.")
-        return
-
     with get_session() as session:
+        state = user_search_state.get(callback.from_user.id)
+        if state is None or state.query_id != query_id:
+            settings = get_settings(require_tokens=False)
+            query_row = get_search_query(session, query_id, callback.from_user.id)
+            if query_row is None:
+                await callback.answer("Search state expired. Send the query again.")
+                return
+            posts = search_posts(session, query_row.query, settings.results_per_page, 0)
+            state = SearchState(query_id=query_id, results=[post.id for post in posts])
+            user_search_state[callback.from_user.id] = state
+
+        if index < 0 or index >= len(state.results):
+            await callback.answer("No such result.")
+            return
+
         post = session.get(Post, state.results[index])
         if post is None:
             await callback.answer("Result is no longer available.")

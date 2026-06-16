@@ -10,7 +10,9 @@ from app.db.repositories import (
     ImageInput,
     PostInput,
     get_latest_posts,
+    get_search_query,
     iter_images_without_ocr,
+    add_search_query,
     search_post_results,
     search_posts,
     upsert_post,
@@ -446,6 +448,64 @@ def test_search_posts_matches_tags_with_fallback_scoring():
     assert [post.vk_post_id for post in results] == [15]
 
 
+def test_search_posts_deduplicates_near_duplicate_ocr_stories():
+    session = make_session()
+    duplicate_text = (
+        "Как я тебя понимаю. Жил один 6 лет и вынужден сейчас жить с родаками. "
+        "Мамка храпит так что слышно через две закрытые двери. Батя от нее не отстает. "
+        "Приходит с работы рано и падает спать. Потом врубает телик на всю квартиру. "
+        "На кухне стоит батин суп и начинаются семейные разговоры про батю."
+    )
+    duplicate_a = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=20,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_20",
+            text="",
+            published_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
+            likes_count=10,
+            images=(ImageInput("https://example.com/20.jpg", "data/images/20.jpg"),),
+        ),
+    )
+    duplicate_a.ocr_text = duplicate_text
+    duplicate_b = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=21,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_21",
+            text="",
+            published_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            likes_count=1,
+            images=(ImageInput("https://example.com/21.jpg", "data/images/21.jpg"),),
+        ),
+    )
+    duplicate_b.ocr_text = duplicate_text.replace("понимаю", "п0нимаю").replace("закрытые", "закрытыe")
+    unique = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=22,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_22",
+            text="",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/22.jpg", "data/images/22.jpg"),),
+        ),
+    )
+    unique.ocr_text = (
+        "Другая история про батин суп. Отец варил странный обед, сосед смеялся, "
+        "а потом вся семья обсуждала кастрюлю и рецепт."
+    )
+    session.commit()
+
+    results = search_posts(session, "про батин суп", limit=5)
+
+    result_ids = {post.vk_post_id for post in results}
+    assert result_ids == {20, 22}
+    assert 21 not in result_ids
+
+
 def test_get_latest_posts_requires_images():
     session = make_session()
     upsert_post(
@@ -473,6 +533,77 @@ def test_get_latest_posts_requires_images():
     session.commit()
 
     assert [post.vk_post_id for post in get_latest_posts(session)] == [1]
+
+
+def test_get_latest_posts_deduplicates_multi_image_posts():
+    session = make_session()
+    upsert_post(
+        session,
+        PostInput(
+            vk_post_id=1,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_1",
+            text="multi image",
+            published_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            images=(
+                ImageInput("https://example.com/1.jpg", "data/images/1.jpg"),
+                ImageInput("https://example.com/2.jpg", "data/images/2.jpg"),
+            ),
+        ),
+    )
+    upsert_post(
+        session,
+        PostInput(
+            vk_post_id=2,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_2",
+            text="single image",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/3.jpg", "data/images/3.jpg"),),
+        ),
+    )
+    session.commit()
+
+    assert [post.vk_post_id for post in get_latest_posts(session, limit=5)] == [1, 2]
+
+
+def test_get_search_query_requires_same_user():
+    session = make_session()
+    query = add_search_query(session, user_id=10, query="needle")
+    session.commit()
+
+    assert get_search_query(session, query.id, user_id=10).query == "needle"
+    assert get_search_query(session, query.id, user_id=11) is None
+
+
+def test_search_and_latest_posts_skip_promotional_posts():
+    session = make_session()
+    upsert_post(
+        session,
+        PostInput(
+            vk_post_id=385700,
+            vk_owner_id=-121574455,
+            vk_url="https://vk.com/wall-121574455_385700",
+            text="[club27725025|PHOTO FILM] - атмосферный и интересный паблик c фотографиями!",
+            published_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/ad.jpg", "data/images/ad.jpg"),),
+        ),
+    )
+    upsert_post(
+        session,
+        PostInput(
+            vk_post_id=1,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_1",
+            text="атмосферный тред с фотографиями",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/thread.jpg", "data/images/thread.jpg"),),
+        ),
+    )
+    session.commit()
+
+    assert [post.vk_post_id for post in search_posts(session, "атмосферный", limit=5)] == [1]
+    assert [post.vk_post_id for post in get_latest_posts(session, limit=5)] == [1]
 
 
 def test_iter_images_without_ocr_skips_posts_with_ocr_unless_forced():

@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.vk.client import VKClient, build_vk_url, extract_post_photos, pick_largest_photo
+from app.vk.client import VKClient, build_vk_url, extract_post_photos, is_promotional_post, pick_largest_photo
 from app.vk.downloader import image_filename
 
 
@@ -33,6 +33,22 @@ def test_extract_post_photos_ignores_non_photo_attachments():
 
 def test_build_vk_url():
     assert build_vk_url(-1, 42) == "https://vk.com/wall-1_42"
+
+
+def test_is_promotional_post_detects_vk_ad_flag():
+    assert is_promotional_post({"marked_as_ads": 1, "text": "thread text"}) is True
+
+
+def test_is_promotional_post_detects_club_link_ad_text():
+    post = {"text": "[club27725025|PHOTO FILM] - атмосферный и интересный паблик c фотографиями!"}
+
+    assert is_promotional_post(post) is True
+
+
+def test_is_promotional_post_does_not_reject_plain_thread_text():
+    post = {"text": "обычный тред с картинками и обсуждением"}
+
+    assert is_promotional_post(post) is False
 
 
 def test_image_filename_is_stable_and_keeps_extension():

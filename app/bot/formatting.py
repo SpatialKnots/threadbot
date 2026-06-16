@@ -10,7 +10,7 @@ TELEGRAM_MESSAGE_LIMIT = 4096
 
 
 def _text_fragment(post: Post, max_len: int = 420) -> str:
-    text = (post.text or post.ocr_text or "").strip()
+    text = (post.text or "").strip()
     if not text:
         return "No text saved."
     text = " ".join(text.split())
@@ -47,7 +47,7 @@ def format_post_caption(post: Post, index: int = 0, total: int = 1) -> str:
 
 
 def format_ocr_debug_messages(post: Post, max_len: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
-    header = "OCR diagnostic:\n"
+    header = "Image-to-text:\n"
     text = (post.ocr_text or "").strip()
     if not text:
         return [header + "No OCR text saved for this thread yet."]

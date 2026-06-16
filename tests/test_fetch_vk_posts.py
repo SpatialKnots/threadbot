@@ -84,6 +84,46 @@ def test_store_posts_skips_existing_posts_without_downloading(monkeypatch):
     assert (saved, skipped) == (0, 1)
 
 
+def test_store_posts_skips_promotional_posts_without_downloading(monkeypatch):
+    session_factory = make_session_factory()
+
+    async def fail_download(*args, **kwargs):
+        raise AssertionError("promotional posts must not download images")
+
+    monkeypatch.setattr(fetch_vk_posts, "get_session", session_factory)
+    monkeypatch.setattr(fetch_vk_posts, "download_image", fail_download)
+
+    saved, skipped = asyncio.run(
+        fetch_vk_posts._store_posts(
+            [
+                {
+                    "id": 385700,
+                    "owner_id": -121574455,
+                    "date": 1605145560,
+                    "text": "[club27725025|PHOTO FILM] - атмосферный и интересный паблик c фотографиями!",
+                    "attachments": [
+                        {
+                            "type": "photo",
+                            "photo": {
+                                "sizes": [
+                                    {
+                                        "url": "https://example.com/ad.jpg",
+                                        "width": 100,
+                                        "height": 100,
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+            update_existing=False,
+        )
+    )
+
+    assert (saved, skipped) == (0, 1)
+
+
 def test_fetch_and_store_returns_import_statistics(monkeypatch):
     class FakeClient:
         def __init__(self, settings):

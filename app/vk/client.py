@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import re
 from typing import Any
 
 import httpx
@@ -10,6 +11,17 @@ from app.config import Settings, get_settings
 
 
 VK_API_URL = "https://api.vk.com/method"
+VK_CLUB_LINK_RE = re.compile(r"^\s*\[club\d+\|[^\]]+\]\s*[-—:]")
+PROMOTIONAL_TEXT_MARKERS = (
+    "акци",
+    "канал",
+    "магазин",
+    "паблик",
+    "подпис",
+    "реклам",
+    "скидк",
+    "сообществ",
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +53,21 @@ def extract_post_photos(post: dict[str, Any]) -> list[VKPhoto]:
 
 def post_has_original_photos(post: dict[str, Any]) -> bool:
     return bool(extract_post_photos(post))
+
+
+def is_promotional_text(text: str | None) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+    return bool(VK_CLUB_LINK_RE.match(normalized)) and any(
+        marker in normalized for marker in PROMOTIONAL_TEXT_MARKERS
+    )
+
+
+def is_promotional_post(post: dict[str, Any]) -> bool:
+    if int(post.get("marked_as_ads") or 0) == 1:
+        return True
+    return is_promotional_text(post.get("text"))
 
 
 class VKClient:

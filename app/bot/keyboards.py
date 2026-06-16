@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+
+
+def main_reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="START")]],
+        resize_keyboard=True,
+        input_field_placeholder="Send a search query",
+    )
 
 
 def result_keyboard(
@@ -8,6 +16,7 @@ def result_keyboard(
     index: int,
     total: int,
     vk_url: str,
+    post_id: int | None = None,
     original_url: str = "",
 ) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = []
@@ -25,4 +34,6 @@ def result_keyboard(
     if original_url:
         action_row.append(InlineKeyboardButton(text="Open 2ch", url=original_url))
     buttons.append(action_row)
+    if post_id is not None:
+        buttons.append([InlineKeyboardButton(text="Image-to-text", callback_data=f"ocr:{post_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

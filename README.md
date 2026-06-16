@@ -8,7 +8,9 @@ The MVP pipeline is:
 VK API -> SQLite -> OCR-enriched text search -> Telegram image response
 ```
 
-Embeddings, PostgreSQL, admin commands, and semantic ranking are intentionally left for later stages.
+SQLite FTS5 is the primary search index. Optional semantic ranking is implemented
+through `intfloat/multilingual-e5-small` embeddings and a local FAISS index.
+PostgreSQL and admin commands are intentionally left for later stages.
 
 ## Setup
 
@@ -110,6 +112,18 @@ The bot can use a materialized SQLite FTS5 search index when it exists. The
 Telegram search API stays the same and falls back to the in-Python scorer if the
 FTS tables have not been built yet.
 
+When `data/faiss/threads.index` and `data/faiss/thread_ids.json` exist, search
+also blends FAISS semantic candidates with FTS/Python scores. Semantic search is
+enabled by default and can be disabled with:
+
+```env
+THREADBOT_SEMANTIC_SEARCH=false
+```
+
+At runtime, semantic model loading uses local files only. Build the FAISS index
+first so the model and index are available locally before relying on semantic
+ranking in the bot.
+
 Do not rebuild the live database while import is running. If `threads.db-journal`
 exists, make a copy first or wait until the writer exits.
 
@@ -125,8 +139,7 @@ py -3.12 scripts/test_search.py --database-url sqlite:///./threads_search_test.d
 After import and OCR finish, run the same rebuild commands against the live
 database during a maintenance window.
 
-Semantic search is optional and uses `intfloat/multilingual-e5-small` with
-FAISS. Build it only after `search_text` is populated:
+Build semantic search only after `search_text` is populated:
 
 ```bash
 py -3.12 scripts/build_faiss_index.py --database-url sqlite:///./threads_search_test.db

@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
 from app.config import get_settings
 from app.db.repositories import ImageInput, PostInput, existing_vk_post_ids, normalize_vk_datetime, upsert_post
 from app.db.session import get_session, init_db
-from app.vk.client import VKClient, build_vk_url, extract_post_photos
+from app.vk.client import VKClient, build_vk_url, extract_post_photos, is_promotional_post
 from app.vk.downloader import download_image
 
 
@@ -42,6 +42,10 @@ async def _store_posts(posts: list[dict], update_existing: bool) -> tuple[int, i
             if post_id in existing_ids:
                 skipped += 1
                 LOGGER.info("Skipping existing VK post %s.", post_id)
+                continue
+            if is_promotional_post(post):
+                skipped += 1
+                LOGGER.info("Skipping promotional VK post %s.", post_id)
                 continue
             photos = extract_post_photos(post)
             if not photos:

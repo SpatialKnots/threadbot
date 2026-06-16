@@ -12,6 +12,7 @@ from app.db.models import Image, Post, SearchQuery, Tag
 from app.search.fts import fetch_posts_by_ids, search_fts
 from app.search.normalization import expand_query_tokens, normalize_search_text, tokenize_search_query
 from app.search.semantic import SemanticSearchUnavailable, semantic_search
+from app.vk.client import is_promotional_text
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,12 @@ def add_search_query(session: Session, user_id: Optional[int], query: str) -> Se
     return row
 
 
+def get_search_query(session: Session, query_id: int, user_id: Optional[int]) -> SearchQuery | None:
+    return session.scalar(
+        select(SearchQuery).where(SearchQuery.id == query_id, SearchQuery.user_id == user_id)
+    )
+
+
 def _with_post_images(stmt: Select[tuple[Post]]) -> Select[tuple[Post]]:
     return stmt.options(selectinload(Post.images), selectinload(Post.tags))
 
@@ -167,6 +174,40 @@ def _sort_search_results(results: list[PostSearchResult]) -> list[PostSearchResu
     return results
 
 
+def _content_tokens(post: Post) -> set[str]:
+    content = normalize_search_text(" ".join([post.text or "", post.ocr_text or ""]))
+    return {token for token in content.split() if len(token) >= 3 and not token.isdigit()}
+
+
+def _deduplicate_story_results(results: list[PostSearchResult]) -> list[PostSearchResult]:
+    unique: list[PostSearchResult] = []
+    fingerprints: list[set[str]] = []
+    seen_ids: set[int] = set()
+    for result in results:
+        if result.post.id in seen_ids:
+            continue
+        tokens = _content_tokens(result.post)
+        is_duplicate = False
+        if len(tokens) >= 20:
+            for fingerprint in fingerprints:
+                if len(fingerprint) < 20:
+                    continue
+                overlap = len(tokens & fingerprint) / min(len(tokens), len(fingerprint))
+                if overlap >= 0.85:
+                    is_duplicate = True
+                    break
+        if is_duplicate:
+            continue
+        seen_ids.add(result.post.id)
+        unique.append(result)
+        fingerprints.append(tokens)
+    return unique
+
+
+def _is_displayable_post(post: Post) -> bool:
+    return not is_promotional_text(post.text)
+
+
 def _fallback_search_results(
     session: Session,
     normalized_query: str,
@@ -177,7 +218,7 @@ def _fallback_search_results(
     results = [
         PostSearchResult(post=post, score=score, source="python")
         for post in posts
-        if (score := _score_post_for_query(post, normalized_query, token_groups)) > 0
+        if _is_displayable_post(post) and (score := _score_post_for_query(post, normalized_query, token_groups)) > 0
     ]
     return _sort_search_results(results)
 
@@ -219,7 +260,9 @@ def search_post_results(session: Session, query: str, limit: int = 5, offset: in
         fts_scores = {item.post_id: item.score for item in fts_candidates}
         semantic_scores = {item.post_id: item.score for item in semantic_candidates}
         candidate_ids = list(dict.fromkeys([*fts_scores.keys(), *semantic_scores.keys()]))
-        candidate_posts = [post for post in fetch_posts_by_ids(session, candidate_ids) if post.images]
+        candidate_posts = [
+            post for post in fetch_posts_by_ids(session, candidate_ids) if post.images and _is_displayable_post(post)
+        ]
         results: list[PostSearchResult] = []
         for post in candidate_posts:
             score = _score_post_for_query(post, normalized, token_groups)
@@ -232,9 +275,9 @@ def search_post_results(session: Session, query: str, limit: int = 5, offset: in
             source = _source_name(post.id in fts_scores, post.id in semantic_scores)
             results.append(PostSearchResult(post=post, score=score + fts_rank_bonus + semantic_bonus, source=source))
         if results:
-            return _sort_search_results(results)[offset : offset + limit]
+            return _deduplicate_story_results(_sort_search_results(results))[offset : offset + limit]
 
-    return _fallback_search_results(session, normalized, token_groups)[offset : offset + limit]
+    return _deduplicate_story_results(_fallback_search_results(session, normalized, token_groups))[offset : offset + limit]
 
 
 def search_posts(session: Session, query: str, limit: int = 5, offset: int = 0) -> list[Post]:
@@ -243,12 +286,25 @@ def search_posts(session: Session, query: str, limit: int = 5, offset: int = 0) 
 
 def get_random_post(session: Session) -> Optional[Post]:
     stmt = select(Post).join(Post.images).order_by(func.random()).limit(1)
-    return session.scalar(_with_post_images(stmt))
+    for _ in range(20):
+        post = session.scalar(_with_post_images(stmt))
+        if post is None or _is_displayable_post(post):
+            return post
+    stmt = select(Post).join(Post.images).distinct()
+    posts = list(session.scalars(_with_post_images(stmt)).all())
+    return next((post for post in posts if _is_displayable_post(post)), None)
 
 
 def get_latest_posts(session: Session, limit: int = 5) -> list[Post]:
-    stmt = select(Post).join(Post.images).order_by(Post.published_at.desc().nullslast(), Post.id.desc()).limit(limit)
-    return list(session.scalars(_with_post_images(stmt)).all())
+    stmt = (
+        select(Post)
+        .join(Post.images)
+        .distinct()
+        .order_by(Post.published_at.desc().nullslast(), Post.id.desc())
+        .limit(max(limit * 5, limit))
+    )
+    posts = list(session.scalars(_with_post_images(stmt)).all())
+    return [post for post in posts if _is_displayable_post(post)][:limit]
 
 
 def iter_images_without_ocr(

@@ -6,6 +6,7 @@ __pycache__/
 *.log
 threads.db
 .pytest_cache/
+.threadbot.lock
 data/fetch_checkpoint*.json
 data/faiss/
 data/images/*
