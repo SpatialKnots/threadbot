@@ -15,11 +15,13 @@ from app.config import get_settings
 from app.db.models import Post
 from app.db.repositories import add_search_query, get_latest_posts, get_random_post, search_posts
 from app.db.session import get_session
+from app.twoch.originals import extract_2ch_post_numbers, find_original_from_text
 
 
 router = Router()
 logger = logging.getLogger(__name__)
 check_lock = asyncio.Lock()
+LAZY_ORIGINAL_LOOKUP_TIMEOUT_SECONDS = 4.0
 
 
 @dataclass
@@ -41,6 +43,8 @@ def _format_check_result(result: CheckResult) -> str:
         f"OCR recognized: {result.ocr_recognized}\n"
         f"OCR empty: {result.ocr_empty}\n"
         f"OCR failed: {result.ocr_failed}\n"
+        f"2ch originals checked: {result.originals_checked}\n"
+        f"2ch originals found: {result.originals_found}\n"
         f"Search rebuilt: {'yes' if result.search_rebuilt else 'no'}"
     )
 
@@ -49,10 +53,33 @@ def _post_image_paths(post: Post) -> list[str]:
     return [image.local_path for image in sorted(post.images, key=lambda image: image.id)]
 
 
+async def _ensure_original_url(post: Post) -> str:
+    if post.original_url or not extract_2ch_post_numbers(post.ocr_text or ""):
+        return post.original_url or ""
+    try:
+        original = await asyncio.wait_for(
+            find_original_from_text(post.ocr_text or "", number_limit=2),
+            timeout=LAZY_ORIGINAL_LOOKUP_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.info("Lazy 2ch original lookup timed out for post_id=%s.", post.id)
+        return ""
+    if original is None:
+        return ""
+    with get_session() as session:
+        stored_post = session.get(Post, post.id)
+        if stored_post is not None and not stored_post.original_url:
+            stored_post.original_url = original.url
+            session.commit()
+    post.original_url = original.url
+    return original.url
+
+
 async def _send_post(message: Message, post: Post, index: int = 0, total: int = 1, query_id: int = 0) -> None:
+    await _ensure_original_url(post)
     caption = format_post_caption(post, index=index, total=total)
     image_paths = _post_image_paths(post)
-    keyboard = result_keyboard(query_id, index, total, post.vk_url)
+    keyboard = result_keyboard(query_id, index, total, post.vk_url, original_url=post.original_url)
     if len(image_paths) == 1:
         await message.answer_photo(FSInputFile(image_paths[0]), caption=caption, reply_markup=keyboard)
     elif image_paths:

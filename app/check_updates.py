@@ -4,6 +4,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
@@ -12,6 +13,7 @@ from app.db.models import Image, Post
 from app.db.session import get_session, make_engine
 from app.ocr.recognize import OCRBackendUnavailable, OCRRecognitionError, recognize_image_text
 from app.search.fts import rebuild_fts_index
+from app.twoch.originals import TwochClient, find_original_from_text
 from scripts.fetch_vk_posts import fetch_and_store
 from scripts.rebuild_search_text import rebuild_search_text
 from scripts.run_ocr import _join_ocr_chunks
@@ -29,6 +31,8 @@ class CheckResult:
     ocr_recognized: int
     ocr_empty: int
     ocr_failed: int
+    originals_checked: int
+    originals_found: int
     search_rebuilt: bool
 
 
@@ -89,6 +93,34 @@ def _run_ocr_for_posts(post_ids: list[int], language: str = "rus+eng", psm: int 
     return selected_images, recognized_images, empty_images, failed_images
 
 
+async def _resolve_originals_for_posts(post_ids: list[int]) -> tuple[int, int]:
+    if not post_ids:
+        return 0, 0
+
+    checked = 0
+    found = 0
+    client = TwochClient()
+    try:
+        board_ids = await client.fetch_board_ids()
+    except (httpx.HTTPError, OSError, ValueError, TypeError) as exc:
+        LOGGER.warning("Could not fetch 2ch board list before original lookup: %s", exc)
+        board_ids = ["b"]
+    with get_session() as session:
+        posts = list(session.scalars(select(Post).where(Post.id.in_(post_ids), Post.original_url == "")).all())
+        for post in posts:
+            if not post.ocr_text:
+                continue
+            checked += 1
+            original = await find_original_from_text(post.ocr_text, client=client, board_ids=board_ids)
+            if original is None:
+                continue
+            post.original_url = original.url
+            found += 1
+            LOGGER.info("Resolved 2ch original for post_id=%s: %s", post.id, original.url)
+        session.commit()
+    return checked, found
+
+
 async def check_for_new_threads(settings: Settings) -> CheckResult:
     previous_empty_ids = _empty_ocr_post_ids()
     inspected, saved, skipped = await fetch_and_store(
@@ -102,9 +134,10 @@ async def check_for_new_threads(settings: Settings) -> CheckResult:
 
     new_empty_post_ids = _new_empty_ocr_post_ids(previous_empty_ids)
     ocr_selected, ocr_recognized, ocr_empty, ocr_failed = _run_ocr_for_posts(new_empty_post_ids)
+    originals_checked, originals_found = await _resolve_originals_for_posts(new_empty_post_ids)
 
     search_rebuilt = False
-    if saved > 0 or ocr_recognized > 0:
+    if saved > 0 or ocr_recognized > 0 or originals_found > 0:
         rebuild_search_text(settings.database_url, batch_size=500)
         engine = make_engine(settings.database_url)
         Session = sessionmaker(bind=engine, expire_on_commit=False)
@@ -121,5 +154,7 @@ async def check_for_new_threads(settings: Settings) -> CheckResult:
         ocr_recognized=ocr_recognized,
         ocr_empty=ocr_empty,
         ocr_failed=ocr_failed,
+        originals_checked=originals_checked,
+        originals_found=originals_found,
         search_rebuilt=search_rebuilt,
     )

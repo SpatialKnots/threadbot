@@ -3,7 +3,13 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def result_keyboard(query_id: int, index: int, total: int, vk_url: str) -> InlineKeyboardMarkup:
+def result_keyboard(
+    query_id: int,
+    index: int,
+    total: int,
+    vk_url: str,
+    original_url: str = "",
+) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = []
     nav: list[InlineKeyboardButton] = []
     if index > 0:
@@ -12,11 +18,11 @@ def result_keyboard(query_id: int, index: int, total: int, vk_url: str) -> Inlin
         nav.append(InlineKeyboardButton(text="Next", callback_data=f"result:{query_id}:{index + 1}"))
     if nav:
         buttons.append(nav)
-    buttons.append(
-        [
-            InlineKeyboardButton(text="Random", callback_data="random"),
-            InlineKeyboardButton(text="Open VK", url=vk_url),
-        ]
-    )
+    action_row = [
+        InlineKeyboardButton(text="Random", callback_data="random"),
+        InlineKeyboardButton(text="Open VK", url=vk_url),
+    ]
+    if original_url:
+        action_row.append(InlineKeyboardButton(text="Open 2ch", url=original_url))
+    buttons.append(action_row)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-

@@ -74,8 +74,8 @@ Supported commands:
 Any regular text message is treated as a search query.
 
 `/check` manually checks VK for new wall posts, stores new thread images, runs
-OCR for newly imported threads, and rebuilds local search artifacts when new
-data was added.
+OCR for newly imported threads, tries to resolve original 2ch links from OCR
+post numbers, and rebuilds local search artifacts when new data was added.
 
 ## OCR
 

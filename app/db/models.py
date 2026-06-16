@@ -25,6 +25,7 @@ class Post(Base):
     vk_post_id: Mapped[int] = mapped_column(Integer, unique=True, nullable=False, index=True)
     vk_owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
     vk_url: Mapped[str] = mapped_column(Text, nullable=False)
+    original_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
     text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     ocr_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

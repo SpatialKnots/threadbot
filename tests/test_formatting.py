@@ -1,4 +1,4 @@
-from app.bot.formatting import format_ocr_debug_messages
+from app.bot.formatting import format_ocr_debug_messages, format_post_caption
 from app.db.models import Post
 
 
@@ -22,3 +22,19 @@ def test_format_ocr_debug_messages_splits_long_text():
     assert len(messages) > 1
     assert all(message.startswith("OCR diagnostic:\n") for message in messages)
     assert all(len(message) <= 80 for message in messages)
+
+
+def test_format_post_caption_includes_2ch_original_when_available():
+    post = Post(
+        vk_post_id=1,
+        vk_owner_id=-1,
+        vk_url="https://vk.com/wall-1_1",
+        original_url="https://2ch.hk/b/res/123.html#456",
+        text="",
+        ocr_text="recognized",
+    )
+
+    caption = format_post_caption(post)
+
+    assert "Original 2ch:\nhttps://2ch.hk/b/res/123.html#456" in caption
+    assert "VK source:\nhttps://vk.com/wall-1_1" in caption

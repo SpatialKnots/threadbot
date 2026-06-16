@@ -33,6 +33,7 @@ def test_check_for_new_threads_runs_fetch_ocr_and_rebuild(monkeypatch):
     monkeypatch.setattr(check_updates, "fetch_and_store", fake_fetch_and_store)
     monkeypatch.setattr(check_updates, "_new_empty_ocr_post_ids", lambda previous: [3, 4])
     monkeypatch.setattr(check_updates, "_run_ocr_for_posts", lambda post_ids: calls.append(("ocr", post_ids)) or (3, 2, 1, 0))
+    monkeypatch.setattr(check_updates, "_resolve_originals_for_posts", lambda post_ids: asyncio.sleep(0, (2, 1)))
     monkeypatch.setattr(check_updates, "rebuild_search_text", lambda database_url, batch_size: calls.append(("text", database_url, batch_size)))
     monkeypatch.setattr(check_updates, "make_engine", lambda database_url: object())
 
@@ -59,6 +60,8 @@ def test_check_for_new_threads_runs_fetch_ocr_and_rebuild(monkeypatch):
         ocr_recognized=2,
         ocr_empty=1,
         ocr_failed=0,
+        originals_checked=2,
+        originals_found=1,
         search_rebuilt=True,
     )
     assert calls[0][0] == "fetch"
@@ -81,6 +84,7 @@ def test_check_for_new_threads_skips_rebuild_without_new_data(monkeypatch):
     monkeypatch.setattr(check_updates, "fetch_and_store", fake_fetch_and_store)
     monkeypatch.setattr(check_updates, "_new_empty_ocr_post_ids", lambda previous: [])
     monkeypatch.setattr(check_updates, "_run_ocr_for_posts", lambda post_ids: calls.append(("ocr", post_ids)) or (0, 0, 0, 0))
+    monkeypatch.setattr(check_updates, "_resolve_originals_for_posts", lambda post_ids: asyncio.sleep(0, (0, 0)))
     monkeypatch.setattr(check_updates, "rebuild_search_text", lambda *args, **kwargs: calls.append(("text",)))
 
     result = asyncio.run(check_for_new_threads(make_settings()))

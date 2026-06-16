@@ -25,6 +25,11 @@ def format_post_caption(post: Post, index: int = 0, total: int = 1) -> str:
     else:
         date = post.published_at.astimezone(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
 
+    original_2ch = (post.original_url or "").strip()
+    links = f"VK source:\n{post.vk_url}"
+    if original_2ch:
+        links = f"Original 2ch:\n{original_2ch}\n\n{links}"
+
     caption = (
         f"Found: {index + 1}/{total}\n\n"
         f"Date: {date}\n"
@@ -32,12 +37,13 @@ def format_post_caption(post: Post, index: int = 0, total: int = 1) -> str:
         f"Comments: {post.comments_count}\n"
         f"Reposts: {post.reposts_count}\n\n"
         f"Text:\n{_text_fragment(post)}\n\n"
-        f"Original:\n{post.vk_url}"
+        f"{links}"
     )
     if len(caption) <= TELEGRAM_CAPTION_LIMIT:
         return caption
-    keep = TELEGRAM_CAPTION_LIMIT - len(f"\n\nOriginal:\n{post.vk_url}") - 3
-    return caption[:keep].rstrip() + "..." + f"\n\nOriginal:\n{post.vk_url}"
+    footer = f"\n\n{links}"
+    keep = TELEGRAM_CAPTION_LIMIT - len(footer) - 3
+    return caption[:keep].rstrip() + "..." + footer
 
 
 def format_ocr_debug_messages(post: Post, max_len: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
