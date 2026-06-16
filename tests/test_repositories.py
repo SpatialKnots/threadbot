@@ -509,3 +509,44 @@ def test_iter_images_without_ocr_skips_posts_with_ocr_unless_forced():
     assert [image.post_id for image in pending] == [without_ocr.id]
     assert [image.post_id for image in forced] == [without_ocr.id, with_ocr.id]
     assert [image.post_id for image in selected_post] == [without_ocr.id]
+
+
+def test_iter_images_without_ocr_can_select_short_existing_ocr_range():
+    session = make_session()
+    short_ocr = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=1,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_1",
+            text="",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/1.jpg", "data/images/1.jpg"),),
+        ),
+    )
+    long_ocr = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=2,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_2",
+            text="",
+            published_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/2.jpg", "data/images/2.jpg"),),
+        ),
+    )
+    short_ocr.ocr_text = "short"
+    long_ocr.ocr_text = "long enough"
+    session.commit()
+
+    selected = list(
+        iter_images_without_ocr(
+            session,
+            limit=100,
+            force=True,
+            min_existing_ocr_length=1,
+            max_existing_ocr_length=5,
+        )
+    )
+
+    assert [image.post_id for image in selected] == [short_ocr.id]

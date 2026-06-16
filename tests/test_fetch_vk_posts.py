@@ -82,3 +82,31 @@ def test_store_posts_skips_existing_posts_without_downloading(monkeypatch):
     )
 
     assert (saved, skipped) == (0, 1)
+
+
+def test_fetch_and_store_returns_import_statistics(monkeypatch):
+    class FakeClient:
+        def __init__(self, settings):
+            pass
+
+        async def fetch_wall_count(self):
+            return 1
+
+        async def fetch_wall_posts(self, offset=0, count=100):
+            return [{"id": 10, "owner_id": -1, "attachments": []}]
+
+    monkeypatch.setattr(fetch_vk_posts, "get_settings", lambda require_tokens=True: object())
+    monkeypatch.setattr(fetch_vk_posts, "init_db", lambda: None)
+    monkeypatch.setattr(fetch_vk_posts, "VKClient", FakeClient)
+    monkeypatch.setattr(fetch_vk_posts, "_store_posts", lambda posts, update_existing: asyncio.sleep(0, (0, len(posts))))
+
+    result = asyncio.run(
+        fetch_vk_posts.fetch_and_store(
+            limit=1,
+            offset=0,
+            update_existing=False,
+            batch_size=100,
+        )
+    )
+
+    assert result == (1, 0, 1)

@@ -93,7 +93,7 @@ async def fetch_and_store(
     batch_size: int = 100,
     fetch_all: bool = False,
     checkpoint_file: Path | None = None,
-) -> None:
+) -> tuple[int, int, int]:
     settings = get_settings(require_tokens=True)
     init_db()
     client = VKClient(settings)
@@ -153,6 +153,7 @@ async def fetch_and_store(
         saved_total,
         skipped_total,
     )
+    return inspected, saved_total, skipped_total
 
 
 def parse_args() -> argparse.Namespace:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+import logging
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -8,6 +10,7 @@ from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 
 from app.bot.formatting import format_ocr_debug_messages, format_post_caption
 from app.bot.keyboards import result_keyboard
+from app.check_updates import CheckResult, check_for_new_threads
 from app.config import get_settings
 from app.db.models import Post
 from app.db.repositories import add_search_query, get_latest_posts, get_random_post, search_posts
@@ -15,6 +18,8 @@ from app.db.session import get_session
 
 
 router = Router()
+logger = logging.getLogger(__name__)
+check_lock = asyncio.Lock()
 
 
 @dataclass
@@ -24,6 +29,20 @@ class SearchState:
 
 
 user_search_state: dict[int, SearchState] = {}
+
+
+def _format_check_result(result: CheckResult) -> str:
+    return (
+        "Check finished.\n"
+        f"Inspected VK posts: {result.inspected}\n"
+        f"New threads saved: {result.saved}\n"
+        f"Skipped: {result.skipped}\n"
+        f"OCR images: {result.ocr_selected}\n"
+        f"OCR recognized: {result.ocr_recognized}\n"
+        f"OCR empty: {result.ocr_empty}\n"
+        f"OCR failed: {result.ocr_failed}\n"
+        f"Search rebuilt: {'yes' if result.search_rebuilt else 'no'}"
+    )
 
 
 def _post_image_paths(post: Post) -> list[str]:
@@ -53,7 +72,7 @@ async def _send_post(message: Message, post: Post, index: int = 0, total: int = 
 async def start(message: Message) -> None:
     await message.answer(
         "Hi. Send any search query, and I will look for saved VK thread images.\n"
-        "Commands: /search, /random, /latest, /help."
+        "Commands: /search, /random, /latest, /check, /help."
     )
 
 
@@ -61,8 +80,26 @@ async def start(message: Message) -> None:
 async def help_command(message: Message) -> None:
     await message.answer(
         "Send text to search saved post text and OCR text. "
-        "Use /random for a random thread and /latest for recent saved threads."
+        "Use /random for a random thread, /latest for recent saved threads, and /check to import new threads."
     )
+
+
+@router.message(Command("check"))
+async def check_command(message: Message) -> None:
+    if check_lock.locked():
+        await message.answer("Check is already running. Wait for the current run to finish.")
+        return
+
+    await message.answer("Checking VK for new threads. This can take a few minutes if OCR is needed.")
+    settings = get_settings(require_tokens=True)
+    async with check_lock:
+        try:
+            result = await check_for_new_threads(settings)
+        except Exception:
+            logger.exception("Manual /check failed.")
+            await message.answer("Check failed. See application logs for details.")
+            return
+    await message.answer(_format_check_result(result))
 
 
 @router.message(Command("random"))

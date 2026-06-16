@@ -39,6 +39,18 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=100, help="Maximum number of images to process. Use 0 for no limit.")
     parser.add_argument("--post-id", type=int, default=None, help="Process images attached to one local post id.")
     parser.add_argument("--force", action="store_true", help="Process images even when the post already has OCR text.")
+    parser.add_argument(
+        "--max-existing-ocr-length",
+        type=int,
+        default=None,
+        help="Process images whose post OCR text is at most this many characters.",
+    )
+    parser.add_argument(
+        "--min-existing-ocr-length",
+        type=int,
+        default=None,
+        help="Process images whose post OCR text is at least this many characters.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Run OCR and log results without writing to the database.")
     parser.add_argument("--lang", default="rus+eng", help="Tesseract language list, for example rus+eng.")
     parser.add_argument("--psm", type=int, default=6, help="Tesseract page segmentation mode.")
@@ -49,7 +61,16 @@ def main() -> None:
     logging.getLogger("numexpr").setLevel(logging.WARNING)
     init_db()
     with get_session() as session:
-        images = list(iter_images_without_ocr(session, args.limit, post_id=args.post_id, force=args.force))
+        images = list(
+            iter_images_without_ocr(
+                session,
+                args.limit,
+                post_id=args.post_id,
+                force=args.force,
+                min_existing_ocr_length=args.min_existing_ocr_length,
+                max_existing_ocr_length=args.max_existing_ocr_length,
+            )
+        )
         logger.info("Selected %d image(s) for OCR.", len(images))
         recognized_by_post: dict[int, list[str]] = defaultdict(list)
         recognized_images = 0

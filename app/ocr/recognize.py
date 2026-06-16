@@ -70,7 +70,7 @@ def preprocess_image_for_ocr(image_path: str):
     if max_side < 1600:
         scale = 1600 / max_side
         image = image.resize((int(width * scale), int(height * scale)))
-    return image.point(lambda pixel: 255 if pixel > 180 else 0)
+    return image
 
 
 def recognize_image_text(image_path: str, language: str = "rus+eng", psm: int = 6) -> str:

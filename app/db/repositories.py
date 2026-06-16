@@ -252,10 +252,19 @@ def get_latest_posts(session: Session, limit: int = 5) -> list[Post]:
 
 
 def iter_images_without_ocr(
-    session: Session, limit: int = 100, post_id: int | None = None, force: bool = False
+    session: Session,
+    limit: int = 100,
+    post_id: int | None = None,
+    force: bool = False,
+    min_existing_ocr_length: int | None = None,
+    max_existing_ocr_length: int | None = None,
 ) -> Iterable[Image]:
     stmt = select(Image).join(Image.post).options(selectinload(Image.post)).order_by(Image.id)
-    if not force:
+    if min_existing_ocr_length is not None:
+        stmt = stmt.where(func.length(Post.ocr_text) >= min_existing_ocr_length)
+    if max_existing_ocr_length is not None:
+        stmt = stmt.where(func.length(Post.ocr_text) <= max_existing_ocr_length)
+    elif not force:
         stmt = stmt.where(or_(Post.ocr_text == "", Post.ocr_text.is_(None)))
     if post_id is not None:
         stmt = stmt.where(Post.id == post_id)

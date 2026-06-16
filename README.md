@@ -45,6 +45,23 @@ Use `--update-existing` to refresh counters and metadata for posts already saved
 python -m app.main
 ```
 
+On startup, the bot checks the latest VK wall posts and imports posts that are
+not yet present in the local database. If new posts were saved, it rebuilds
+`posts.search_text` and the SQLite FTS index before Telegram polling starts.
+
+Startup sync settings:
+
+```env
+STARTUP_FETCH_ENABLED=true
+STARTUP_FETCH_LIMIT=100
+STARTUP_FETCH_BATCH_SIZE=100
+STARTUP_REBUILD_SEARCH=true
+```
+
+Increase `STARTUP_FETCH_LIMIT` if more than 100 new wall posts can appear
+between bot launches. Set `STARTUP_FETCH_ENABLED=false` for maintenance runs
+that must not call VK.
+
 Supported commands:
 
 - `/start`
@@ -52,8 +69,13 @@ Supported commands:
 - `/search query`
 - `/random`
 - `/latest`
+- `/check`
 
 Any regular text message is treated as a search query.
+
+`/check` manually checks VK for new wall posts, stores new thread images, runs
+OCR for newly imported threads, and rebuilds local search artifacts when new
+data was added.
 
 ## OCR
 

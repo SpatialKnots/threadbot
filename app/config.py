@@ -25,6 +25,18 @@ def _int_env(name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean, got {raw!r}")
+
+
 def _is_placeholder(value: str) -> bool:
     lowered = value.lower()
     return lowered.startswith("your_") or lowered in {"change_me", "replace_me", "token"}
@@ -39,6 +51,10 @@ class Settings:
     database_url: str
     image_storage_path: Path
     results_per_page: int
+    startup_fetch_enabled: bool
+    startup_fetch_limit: int
+    startup_fetch_batch_size: int
+    startup_rebuild_search: bool
 
 
 def get_settings(require_tokens: bool = True) -> Settings:
@@ -60,6 +76,10 @@ def get_settings(require_tokens: bool = True) -> Settings:
         database_url=os.getenv("DATABASE_URL", "sqlite:///./threads.db").strip(),
         image_storage_path=Path(os.getenv("IMAGE_STORAGE_PATH", "./data/images")),
         results_per_page=_int_env("RESULTS_PER_PAGE", 5),
+        startup_fetch_enabled=_bool_env("STARTUP_FETCH_ENABLED", True),
+        startup_fetch_limit=_int_env("STARTUP_FETCH_LIMIT", 100),
+        startup_fetch_batch_size=_int_env("STARTUP_FETCH_BATCH_SIZE", 100),
+        startup_rebuild_search=_bool_env("STARTUP_REBUILD_SEARCH", True),
     )
 
 
