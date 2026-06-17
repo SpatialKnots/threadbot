@@ -1,5 +1,7 @@
 # Thread Search Bot
 
+![ThreadBot logo](assets/threadbot_logo.png)
+
 Telegram bot for searching locally indexed thread images from a VK group.
 
 The MVP pipeline is:
