@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from app.bot import handlers
+from app.bot.keyboards import HELP_BUTTON, LATEST_BUTTON, RANDOM_BUTTON, SEARCH_BUTTON
 from app.db.models import Image, Post
 
 
@@ -129,9 +130,48 @@ def test_start_text_message_sends_welcome_without_search(monkeypatch):
 
     asyncio.run(handlers.text_message(FakeMessage()))
 
-    assert len(sent_messages) == 1
+    assert len(sent_messages) == 2
     assert sent_messages[0][0] == handlers.WELCOME_TEXT
-    assert sent_messages[0][1].keyboard[0][0].text == "START"
+    assert sent_messages[0][1].keyboard[0][0].text == SEARCH_BUTTON
+    assert sent_messages[1][1].inline_keyboard[0][0].callback_data == "search_help"
+
+
+def test_reply_action_buttons_do_not_run_text_search(monkeypatch):
+    calls = []
+    sent_messages = []
+
+    class FakeMessage:
+        text = ""
+
+        async def answer(self, text, reply_markup=None):
+            sent_messages.append(text)
+
+    async def fail_search(message, query):
+        raise AssertionError("action buttons must not run text search")
+
+    async def fake_random(message):
+        calls.append("random")
+
+    async def fake_latest(message):
+        calls.append("latest")
+
+    monkeypatch.setattr(handlers, "handle_text_search", fail_search)
+    monkeypatch.setattr(handlers, "random_command", fake_random)
+    monkeypatch.setattr(handlers, "latest_command", fake_latest)
+
+    message = FakeMessage()
+
+    message.text = SEARCH_BUTTON
+    asyncio.run(handlers.text_message(message))
+    message.text = RANDOM_BUTTON
+    asyncio.run(handlers.text_message(message))
+    message.text = LATEST_BUTTON
+    asyncio.run(handlers.text_message(message))
+    message.text = HELP_BUTTON
+    asyncio.run(handlers.text_message(message))
+
+    assert sent_messages == [handlers.SEARCH_HELP_TEXT, handlers.HELP_TEXT]
+    assert calls == ["random", "latest"]
 
 
 def test_send_post_does_not_block_on_lazy_original_lookup(monkeypatch):

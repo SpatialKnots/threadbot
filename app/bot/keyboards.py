@@ -3,11 +3,35 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 
+SEARCH_BUTTON = "🔎 Search"
+RANDOM_BUTTON = "🎲 Random"
+LATEST_BUTTON = "🕓 Latest"
+HELP_BUTTON = "❔ Help"
+
+
 def main_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="START")]],
+        keyboard=[
+            [KeyboardButton(text=SEARCH_BUTTON), KeyboardButton(text=RANDOM_BUTTON)],
+            [KeyboardButton(text=LATEST_BUTTON), KeyboardButton(text=HELP_BUTTON)],
+        ],
         resize_keyboard=True,
         input_field_placeholder="Send a search query",
+    )
+
+
+def welcome_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=SEARCH_BUTTON, callback_data="search_help"),
+                InlineKeyboardButton(text=RANDOM_BUTTON, callback_data="random"),
+            ],
+            [
+                InlineKeyboardButton(text=LATEST_BUTTON, callback_data="latest"),
+                InlineKeyboardButton(text=HELP_BUTTON, callback_data="help"),
+            ],
+        ]
     )
 
 
@@ -28,7 +52,7 @@ def result_keyboard(
     if nav:
         buttons.append(nav)
     action_row = [
-        InlineKeyboardButton(text="Random", callback_data="random"),
+        InlineKeyboardButton(text=RANDOM_BUTTON, callback_data="random"),
         InlineKeyboardButton(text="Open VK", url=vk_url),
     ]
     if original_url:

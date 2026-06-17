@@ -1,11 +1,33 @@
-from app.bot.keyboards import main_reply_keyboard, result_keyboard
+from app.bot.keyboards import (
+    HELP_BUTTON,
+    LATEST_BUTTON,
+    RANDOM_BUTTON,
+    SEARCH_BUTTON,
+    main_reply_keyboard,
+    result_keyboard,
+    welcome_inline_keyboard,
+)
 
 
-def test_main_reply_keyboard_contains_start_button():
+def test_main_reply_keyboard_contains_action_buttons():
     keyboard = main_reply_keyboard()
 
-    assert keyboard.keyboard[0][0].text == "START"
+    assert [button.text for row in keyboard.keyboard for button in row] == [
+        SEARCH_BUTTON,
+        RANDOM_BUTTON,
+        LATEST_BUTTON,
+        HELP_BUTTON,
+    ]
     assert keyboard.resize_keyboard is True
+
+
+def test_welcome_inline_keyboard_contains_action_callbacks():
+    keyboard = welcome_inline_keyboard()
+
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert [button.text for button in buttons] == [SEARCH_BUTTON, RANDOM_BUTTON, LATEST_BUTTON, HELP_BUTTON]
+    assert [button.callback_data for button in buttons] == ["search_help", "random", "latest", "help"]
 
 
 def test_result_keyboard_includes_2ch_link_when_available():
@@ -20,7 +42,7 @@ def test_result_keyboard_includes_2ch_link_when_available():
 
     buttons = keyboard.inline_keyboard[-2]
 
-    assert [button.text for button in buttons] == ["Random", "Open VK", "Open 2ch"]
+    assert [button.text for button in buttons] == [RANDOM_BUTTON, "Open VK", "Open 2ch"]
     assert buttons[-1].url == "https://2ch.hk/b/res/123.html#456"
 
     ocr_buttons = keyboard.inline_keyboard[-1]

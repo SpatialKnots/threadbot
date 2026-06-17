@@ -9,7 +9,15 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 
 from app.bot.formatting import format_ocr_debug_messages, format_post_caption
-from app.bot.keyboards import main_reply_keyboard, result_keyboard
+from app.bot.keyboards import (
+    HELP_BUTTON,
+    LATEST_BUTTON,
+    RANDOM_BUTTON,
+    SEARCH_BUTTON,
+    main_reply_keyboard,
+    result_keyboard,
+    welcome_inline_keyboard,
+)
 from app.check_updates import CheckResult, check_for_new_threads
 from app.config import get_settings
 from app.db.models import Post
@@ -40,6 +48,11 @@ WELCOME_TEXT = (
     "/latest - latest saved threads\n"
     "/check - import new VK posts\n"
     "/help - short help"
+)
+SEARCH_HELP_TEXT = "Send a search phrase, or use /search followed by a query."
+HELP_TEXT = (
+    "Send text to search saved post text and OCR text. "
+    "Use /random for a random thread, /latest for recent saved threads, and /check to import new threads."
 )
 
 
@@ -104,6 +117,7 @@ async def _send_post(message: Message, post: Post, index: int = 0, total: int = 
 
 async def _send_welcome(message: Message) -> None:
     await message.answer(WELCOME_TEXT, reply_markup=main_reply_keyboard())
+    await message.answer("Choose an action:", reply_markup=welcome_inline_keyboard())
 
 
 @router.message(Command("start"))
@@ -113,10 +127,7 @@ async def start(message: Message) -> None:
 
 @router.message(Command("help"))
 async def help_command(message: Message) -> None:
-    await message.answer(
-        "Send text to search saved post text and OCR text. "
-        "Use /random for a random thread, /latest for recent saved threads, and /check to import new threads."
-    )
+    await message.answer(HELP_TEXT)
 
 
 @router.message(Command("check"))
@@ -173,8 +184,21 @@ async def search_command(message: Message) -> None:
 async def text_message(message: Message) -> None:
     if not message.text:
         return
-    if message.text.strip().upper() == "START":
+    text = message.text.strip()
+    if text.upper() == "START":
         await _send_welcome(message)
+        return
+    if text == SEARCH_BUTTON:
+        await message.answer(SEARCH_HELP_TEXT)
+        return
+    if text == RANDOM_BUTTON:
+        await random_command(message)
+        return
+    if text == LATEST_BUTTON:
+        await latest_command(message)
+        return
+    if text == HELP_BUTTON:
+        await help_command(message)
         return
     await handle_text_search(message, message.text)
 
@@ -198,6 +222,30 @@ async def random_callback(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
     await random_command(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(lambda callback: callback.data == "latest")
+async def latest_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    await latest_command(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(lambda callback: callback.data == "help")
+async def help_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    await callback.message.answer(HELP_TEXT)
+    await callback.answer()
+
+
+@router.callback_query(lambda callback: callback.data == "search_help")
+async def search_help_callback(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    await callback.message.answer(SEARCH_HELP_TEXT)
     await callback.answer()
 
 
