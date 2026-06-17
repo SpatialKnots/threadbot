@@ -885,6 +885,41 @@ def test_search_and_latest_posts_skip_promotional_posts():
     assert [post.vk_post_id for post in get_latest_posts(session, limit=5)] == [1]
 
 
+def test_search_and_latest_posts_skip_market_promotional_posts():
+    session = make_session()
+    upsert_post(
+        session,
+        PostInput(
+            vk_post_id=384047,
+            vk_owner_id=-121574455,
+            vk_url="https://vk.com/wall-121574455_384047",
+            text=(
+                "Запускаем продажу streetwear шмоток\n\n"
+                "С осенними скидками все товары по 1069р!\n\n"
+                "Полный каталог товаров: https://vk.com/market-199985222\n\n"
+                "Кол-во ограничено."
+            ),
+            published_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/ad.jpg", "data/images/ad.jpg"),),
+        ),
+    )
+    upsert_post(
+        session,
+        PostInput(
+            vk_post_id=1,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_1",
+            text="streetwear тред про одежду из старого обсуждения",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/thread.jpg", "data/images/thread.jpg"),),
+        ),
+    )
+    session.commit()
+
+    assert [post.vk_post_id for post in search_posts(session, "streetwear", limit=5)] == [1]
+    assert [post.vk_post_id for post in get_latest_posts(session, limit=5)] == [1]
+
+
 def test_iter_images_without_ocr_skips_posts_with_ocr_unless_forced():
     session = make_session()
     without_ocr = upsert_post(

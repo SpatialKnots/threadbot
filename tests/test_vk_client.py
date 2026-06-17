@@ -45,6 +45,19 @@ def test_is_promotional_post_detects_club_link_ad_text():
     assert is_promotional_post(post) is True
 
 
+def test_is_promotional_post_detects_market_streetwear_ad_text():
+    post = {
+        "text": (
+            "Запускаем продажу streetwear шмоток\n\n"
+            "С осенними скидками все товары по 1069р!\n\n"
+            "Полный каталог товаров: https://vk.com/market-199985222\n\n"
+            "Кол-во ограничено."
+        )
+    }
+
+    assert is_promotional_post(post) is True
+
+
 def test_is_promotional_post_does_not_reject_plain_thread_text():
     post = {"text": "обычный тред с картинками и обсуждением"}
 

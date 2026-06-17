@@ -12,15 +12,31 @@ from app.config import Settings, get_settings
 
 VK_API_URL = "https://api.vk.com/method"
 VK_CLUB_LINK_RE = re.compile(r"^\s*\[club\d+\|[^\]]+\]\s*[-—:]")
+VK_MARKET_LINK_RE = re.compile(r"https?://(?:m\.)?vk\.com/market[-\w]*", re.IGNORECASE)
 PROMOTIONAL_TEXT_MARKERS = (
     "акци",
+    "каталог",
     "канал",
     "магазин",
     "паблик",
     "подпис",
+    "продаж",
     "реклам",
     "скидк",
     "сообществ",
+    "товар",
+)
+PROMOTIONAL_STRONG_PHRASES = (
+    "каталог товаров",
+    "кол-во ограничено",
+    "количество ограничено",
+    "полный каталог",
+    "по промокоду",
+)
+PROMOTIONAL_PRODUCT_MARKERS = (
+    "streetwear",
+    "худи",
+    "шмот",
 )
 
 
@@ -59,9 +75,15 @@ def is_promotional_text(text: str | None) -> bool:
     normalized = (text or "").strip().lower()
     if not normalized:
         return False
-    return bool(VK_CLUB_LINK_RE.match(normalized)) and any(
-        marker in normalized for marker in PROMOTIONAL_TEXT_MARKERS
-    )
+    has_promo_marker = any(marker in normalized for marker in PROMOTIONAL_TEXT_MARKERS)
+    if bool(VK_CLUB_LINK_RE.match(normalized)) and has_promo_marker:
+        return True
+    if VK_MARKET_LINK_RE.search(normalized):
+        return True
+    if any(phrase in normalized for phrase in PROMOTIONAL_STRONG_PHRASES):
+        return True
+    product_marker_count = sum(marker in normalized for marker in PROMOTIONAL_PRODUCT_MARKERS)
+    return product_marker_count > 0 and has_promo_marker
 
 
 def is_promotional_post(post: dict[str, Any]) -> bool:
