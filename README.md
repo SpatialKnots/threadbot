@@ -91,6 +91,7 @@ THREADBOT_ENABLE_FAVORITES=true
 THREADBOT_ENABLE_SIMILAR=true
 THREADBOT_ENABLE_FEEDBACK=true
 THREADBOT_ENABLE_TAG_COMMANDS=true
+THREADBOT_ENABLE_INLINE=false
 THREADBOT_ADMIN_IDS=123456789
 ```
 
@@ -155,6 +156,24 @@ Commands:
 - `/tag {post_id} {tag1} {tag2} ...` - add tags to a thread. Admin only.
 - `/untag {post_id} {tag1} {tag2} ...` - remove tags from a thread. Admin only.
 - `/tags {post_id}` - show thread tags.
+
+### Inline mode
+
+Inline mode lets Telegram users search from another chat with:
+
+```text
+@threadbot search query
+```
+
+The first implementation returns text cards with the thread caption and source
+links. It does not attach local images, because Telegram inline image results
+need public URLs or cached file ids.
+
+Feature flag:
+
+```env
+THREADBOT_ENABLE_INLINE=false
+```
 
 ## OCR
 

@@ -6,7 +6,15 @@ import logging
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineQuery,
+    InlineQueryResultArticle,
+    InputMediaPhoto,
+    InputTextMessageContent,
+    Message,
+)
 
 from app.bot.formatting import format_ocr_debug_messages, format_post_caption
 from app.bot.keyboards import (
@@ -90,6 +98,30 @@ def _format_check_result(result: CheckResult) -> str:
     )
 
 
+def _compact_inline_text(text: str, max_length: int) -> str:
+    compact = " ".join((text or "").split())
+    if len(compact) <= max_length:
+        return compact
+    return compact[: max_length - 1].rstrip() + "…"
+
+
+def _inline_result_title(post: Post) -> str:
+    title = _compact_inline_text(post.text or post.ocr_text or f"Thread {post.id}", 64)
+    return title or f"Thread {post.id}"
+
+
+def _inline_result_description(post: Post) -> str:
+    description = _compact_inline_text(post.ocr_text or post.text or post.vk_url, 160)
+    return description or post.vk_url
+
+
+def _inline_result_message(post: Post) -> str:
+    parts = [format_post_caption(post), post.vk_url]
+    if post.original_url:
+        parts.append(post.original_url)
+    return "\n\n".join(part for part in parts if part)
+
+
 def is_admin(user_id: int | None) -> bool:
     if user_id is None:
         return False
@@ -158,6 +190,32 @@ async def _send_post(
 async def _send_welcome(message: Message) -> None:
     await message.answer(WELCOME_TEXT, reply_markup=main_reply_keyboard())
     await message.answer("Choose an action:", reply_markup=welcome_inline_keyboard())
+
+
+@router.inline_query()
+async def inline_query(query: InlineQuery) -> None:
+    settings = get_settings(require_tokens=False)
+    if not settings.enable_inline:
+        await query.answer([], cache_time=5, is_personal=True)
+        return
+    search_query = query.query.strip()
+    if not search_query:
+        await query.answer([], cache_time=5, is_personal=True)
+        return
+
+    with get_session() as session:
+        posts = search_posts(session, search_query, limit=min(settings.results_per_page, 10), offset=0)
+
+    results = [
+        InlineQueryResultArticle(
+            id=str(post.id),
+            title=_inline_result_title(post),
+            description=_inline_result_description(post),
+            input_message_content=InputTextMessageContent(message_text=_inline_result_message(post)),
+        )
+        for post in posts
+    ]
+    await query.answer(results, cache_time=30, is_personal=True)
 
 
 @router.message(Command("start"))

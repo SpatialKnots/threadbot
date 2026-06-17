@@ -75,6 +75,7 @@ class Settings:
     enable_similar: bool = True
     enable_feedback: bool = True
     enable_tag_commands: bool = True
+    enable_inline: bool = False
     admin_ids: tuple[int, ...] = ()
 
 
@@ -105,6 +106,7 @@ def get_settings(require_tokens: bool = True) -> Settings:
         enable_similar=_bool_env("THREADBOT_ENABLE_SIMILAR", True),
         enable_feedback=_bool_env("THREADBOT_ENABLE_FEEDBACK", True),
         enable_tag_commands=_bool_env("THREADBOT_ENABLE_TAG_COMMANDS", True),
+        enable_inline=_bool_env("THREADBOT_ENABLE_INLINE", False),
         admin_ids=_int_tuple_env("THREADBOT_ADMIN_IDS"),
     )
 

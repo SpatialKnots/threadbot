@@ -142,6 +142,62 @@ def test_start_text_message_sends_welcome_without_search(monkeypatch):
     assert sent_messages[1][1].inline_keyboard[0][0].callback_data == "search_help"
 
 
+def test_inline_query_disabled_answers_empty(monkeypatch):
+    answers = []
+
+    class FakeInlineQuery:
+        query = "батя"
+
+        async def answer(self, results, cache_time=None, is_personal=None):
+            answers.append((results, cache_time, is_personal))
+
+    monkeypatch.setenv("THREADBOT_ENABLE_INLINE", "false")
+
+    asyncio.run(handlers.inline_query(FakeInlineQuery()))
+
+    assert answers == [([], 5, True)]
+
+
+def test_inline_query_returns_text_articles(monkeypatch):
+    answers = []
+
+    class FakeInlineQuery:
+        query = "батя"
+
+        async def answer(self, results, cache_time=None, is_personal=None):
+            answers.append((results, cache_time, is_personal))
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    post = Post(
+        id=7,
+        vk_post_id=100,
+        vk_owner_id=-1,
+        vk_url="https://vk.com/wall-1_100",
+        text="батя чинит роутер",
+        ocr_text="батя чинит роутер на кухне",
+    )
+
+    monkeypatch.setenv("THREADBOT_ENABLE_INLINE", "true")
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(handlers, "search_posts", lambda session, query, limit, offset: [post])
+
+    asyncio.run(handlers.inline_query(FakeInlineQuery()))
+
+    results, cache_time, is_personal = answers[0]
+    assert cache_time == 30
+    assert is_personal is True
+    assert len(results) == 1
+    assert results[0].id == "7"
+    assert results[0].title == "батя чинит роутер"
+    assert "https://vk.com/wall-1_100" in results[0].input_message_content.message_text
+
+
 def test_reply_action_buttons_do_not_run_text_search(monkeypatch):
     calls = []
     sent_messages = []
