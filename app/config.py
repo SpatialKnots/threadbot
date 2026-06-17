@@ -37,6 +37,22 @@ def _bool_env(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be a boolean, got {raw!r}")
 
 
+def _int_tuple_env(name: str) -> tuple[int, ...]:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return ()
+    values = []
+    for part in raw.split(","):
+        value = part.strip()
+        if not value:
+            continue
+        try:
+            values.append(int(value))
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a comma-separated list of integers, got {raw!r}") from exc
+    return tuple(values)
+
+
 def _is_placeholder(value: str) -> bool:
     lowered = value.lower()
     return lowered.startswith("your_") or lowered in {"change_me", "replace_me", "token"}
@@ -57,6 +73,9 @@ class Settings:
     startup_rebuild_search: bool
     enable_favorites: bool = True
     enable_similar: bool = True
+    enable_feedback: bool = True
+    enable_tag_commands: bool = True
+    admin_ids: tuple[int, ...] = ()
 
 
 def get_settings(require_tokens: bool = True) -> Settings:
@@ -84,6 +103,9 @@ def get_settings(require_tokens: bool = True) -> Settings:
         startup_rebuild_search=_bool_env("STARTUP_REBUILD_SEARCH", True),
         enable_favorites=_bool_env("THREADBOT_ENABLE_FAVORITES", True),
         enable_similar=_bool_env("THREADBOT_ENABLE_SIMILAR", True),
+        enable_feedback=_bool_env("THREADBOT_ENABLE_FEEDBACK", True),
+        enable_tag_commands=_bool_env("THREADBOT_ENABLE_TAG_COMMANDS", True),
+        admin_ids=_int_tuple_env("THREADBOT_ADMIN_IDS"),
     )
 
 

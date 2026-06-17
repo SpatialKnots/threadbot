@@ -1,4 +1,5 @@
 from app.bot.keyboards import (
+    FEEDBACK_BAD_BUTTON,
     FAVORITE_ADD_BUTTON,
     FAVORITE_REMOVE_BUTTON,
     HELP_BUTTON,
@@ -54,8 +55,9 @@ def test_result_keyboard_includes_2ch_link_when_available():
     assert favorite_buttons[1].callback_data == "similar:10"
 
     ocr_buttons = keyboard.inline_keyboard[-1]
-    assert [button.text for button in ocr_buttons] == ["Image-to-text"]
+    assert [button.text for button in ocr_buttons] == ["Image-to-text", FEEDBACK_BAD_BUTTON]
     assert ocr_buttons[0].callback_data == "ocr:10"
+    assert ocr_buttons[1].callback_data == "feedback:bad:10"
 
 
 def test_result_keyboard_can_show_remove_favorite_button():

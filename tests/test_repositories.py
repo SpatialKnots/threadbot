@@ -11,14 +11,18 @@ from app.db.repositories import (
     PostInput,
     _build_similar_query,
     add_favorite,
+    add_search_event,
+    add_tags_to_post,
     find_similar_posts,
     get_latest_posts,
     get_favorite_posts,
+    get_post_tags,
     get_search_query,
     is_favorite,
     iter_images_without_ocr,
     add_search_query,
     remove_favorite,
+    remove_tags_from_post,
     search_post_results,
     search_posts,
     upsert_post,
@@ -580,6 +584,78 @@ def test_get_search_query_requires_same_user():
 
     assert get_search_query(session, query.id, user_id=10).query == "needle"
     assert get_search_query(session, query.id, user_id=11) is None
+
+
+def test_add_search_event_records_disliked_event():
+    session = make_session()
+    post = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=29,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_29",
+            text="feedback target",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/29.jpg", "data/images/29.jpg"),),
+        ),
+    )
+    session.commit()
+
+    event = add_search_event(session, user_id=10, post_id=post.id, event_type="disliked", query="needle")
+    session.commit()
+
+    assert event.id is not None
+    assert event.user_id == 10
+    assert event.post_id == post.id
+    assert event.event_type == "disliked"
+    assert event.query == "needle"
+
+
+def test_add_tags_to_post_creates_tags_and_is_idempotent():
+    session = make_session()
+    post = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=40,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_40",
+            text="tag target",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/40.jpg", "data/images/40.jpg"),),
+        ),
+    )
+    session.commit()
+
+    first = add_tags_to_post(session, post.id, ["батя", "техника", "батя"])
+    second = add_tags_to_post(session, post.id, ["батя", "техника"])
+    session.commit()
+
+    assert [tag.name for tag in first] == ["батя", "техника"]
+    assert second == []
+    assert [tag.name for tag in get_post_tags(session, post.id)] == ["батя", "техника"]
+
+
+def test_remove_tags_from_post_unlinks_only_requested_tags():
+    session = make_session()
+    post = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=41,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_41",
+            text="tag target",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/41.jpg", "data/images/41.jpg"),),
+        ),
+    )
+    session.commit()
+
+    add_tags_to_post(session, post.id, ["батя", "техника"])
+    removed = remove_tags_from_post(session, post.id, ["техника", "missing"])
+    session.commit()
+
+    assert [tag.name for tag in removed] == ["техника"]
+    assert [tag.name for tag in get_post_tags(session, post.id)] == ["батя"]
 
 
 def test_add_favorite_is_idempotent():

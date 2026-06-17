@@ -89,6 +89,9 @@ Feature flag:
 ```env
 THREADBOT_ENABLE_FAVORITES=true
 THREADBOT_ENABLE_SIMILAR=true
+THREADBOT_ENABLE_FEEDBACK=true
+THREADBOT_ENABLE_TAG_COMMANDS=true
+THREADBOT_ADMIN_IDS=123456789
 ```
 
 Commands:
@@ -117,6 +120,41 @@ Feature flag:
 ```env
 THREADBOT_ENABLE_SIMILAR=true
 ```
+
+### Search feedback
+
+Each result has a `👎 Не то` button. The bot stores this as a search quality
+signal without changing search ranking.
+
+Feature flag:
+
+```env
+THREADBOT_ENABLE_FEEDBACK=true
+```
+
+Before using this feature on an existing database, run:
+
+```bash
+python scripts/migrations/002_add_search_events.py
+```
+
+### Manual tags
+
+Admins can add and remove manual tags for saved threads. These commands use the
+existing `tags` and `post_tags` tables.
+
+Feature flags:
+
+```env
+THREADBOT_ENABLE_TAG_COMMANDS=true
+THREADBOT_ADMIN_IDS=123456789,987654321
+```
+
+Commands:
+
+- `/tag {post_id} {tag1} {tag2} ...` - add tags to a thread. Admin only.
+- `/untag {post_id} {tag1} {tag2} ...` - remove tags from a thread. Admin only.
+- `/tags {post_id}` - show thread tags.
 
 ## OCR
 

@@ -10,7 +10,7 @@ from typing import Iterable, Optional
 from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.db.models import Favorite, Image, Post, SearchQuery, Tag
+from app.db.models import Favorite, Image, Post, SearchEvent, SearchQuery, Tag
 from app.search.fts import fetch_posts_by_ids, search_fts
 from app.search.normalization import expand_query_tokens, normalize_search_text, tokenize_search_query
 from app.search.semantic import SemanticSearchUnavailable, semantic_search
@@ -140,6 +140,79 @@ def get_search_query(session: Session, query_id: int, user_id: Optional[int]) ->
     return session.scalar(
         select(SearchQuery).where(SearchQuery.id == query_id, SearchQuery.user_id == user_id)
     )
+
+
+def add_search_event(
+    session: Session,
+    user_id: int | None,
+    post_id: int,
+    event_type: str,
+    query: str | None = None,
+) -> SearchEvent:
+    event = SearchEvent(user_id=user_id, post_id=post_id, event_type=event_type, query=query)
+    session.add(event)
+    session.flush()
+    return event
+
+
+def _normalize_tag_names(tag_names: Iterable[str]) -> list[str]:
+    return list(dict.fromkeys(tag_name.strip() for tag_name in tag_names if tag_name.strip()))
+
+
+def get_post_tags(session: Session, post_id: int) -> list[Tag]:
+    post = session.scalar(select(Post).where(Post.id == post_id).options(selectinload(Post.tags)))
+    if post is None:
+        return []
+    return sorted(post.tags, key=lambda tag: tag.name)
+
+
+def add_tags_to_post(session: Session, post_id: int, tag_names: Iterable[str]) -> list[Tag]:
+    post = session.scalar(select(Post).where(Post.id == post_id).options(selectinload(Post.tags)))
+    if post is None:
+        return []
+    names = _normalize_tag_names(tag_names)
+    if not names:
+        return []
+
+    existing_tags = {
+        tag.name: tag
+        for tag in session.scalars(select(Tag).where(Tag.name.in_(names))).all()
+    }
+    added: list[Tag] = []
+    current_names = {tag.name for tag in post.tags}
+    for name in names:
+        tag = existing_tags.get(name)
+        if tag is None:
+            tag = Tag(name=name)
+            session.add(tag)
+            session.flush()
+            existing_tags[name] = tag
+        if name not in current_names:
+            post.tags.append(tag)
+            current_names.add(name)
+            added.append(tag)
+    session.flush()
+    return added
+
+
+def remove_tags_from_post(session: Session, post_id: int, tag_names: Iterable[str]) -> list[Tag]:
+    post = session.scalar(select(Post).where(Post.id == post_id).options(selectinload(Post.tags)))
+    if post is None:
+        return []
+    names = set(_normalize_tag_names(tag_names))
+    if not names:
+        return []
+
+    removed: list[Tag] = []
+    remaining: list[Tag] = []
+    for tag in post.tags:
+        if tag.name in names:
+            removed.append(tag)
+        else:
+            remaining.append(tag)
+    post.tags = remaining
+    session.flush()
+    return sorted(removed, key=lambda tag: tag.name)
 
 
 def add_favorite(session: Session, user_id: int, post_id: int) -> None:

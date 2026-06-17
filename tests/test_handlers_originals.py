@@ -31,6 +31,12 @@ def test_ensure_original_url_saves_found_2ch_original(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
+        def commit(self):
+            calls.append("commit")
+
+        def commit(self):
+            calls.append("commit")
+
         def get(self, model, post_id):
             saved["post"] = Post(
                 id=post_id,
@@ -205,13 +211,17 @@ def test_favorite_callback_adds_favorite(monkeypatch):
     def fake_add_favorite(session, user_id, post_id):
         calls.append((user_id, post_id))
 
+    def fake_add_search_event(session, user_id, post_id, event_type, query=None):
+        calls.append((user_id, post_id, event_type, query))
+
     monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
     monkeypatch.setattr(handlers, "add_favorite", fake_add_favorite)
+    monkeypatch.setattr(handlers, "add_search_event", fake_add_search_event)
 
     callback = FakeCallback()
     asyncio.run(handlers.favorite_callback(callback))
 
-    assert calls == [(42, 7), "commit"]
+    assert calls == [(42, 7), (42, 7, "favorite_added", None), "commit"]
     assert callback.answer_text == "Добавлено в избранное"
 
 
@@ -307,6 +317,9 @@ def test_similar_callback_sends_first_similar_post(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
+        def commit(self):
+            calls.append("commit")
+
     async def fake_send_post(message, post, index=0, total=1, query_id=0, favorite_action="add"):
         calls.append((message, post.id, index, total, query_id, favorite_action))
 
@@ -315,11 +328,22 @@ def test_similar_callback_sends_first_similar_post(monkeypatch):
     monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
     monkeypatch.setattr(handlers, "find_similar_posts", lambda session, post_id, limit: [post])
     monkeypatch.setattr(handlers, "_send_post", fake_send_post)
+    monkeypatch.setattr(
+        handlers,
+        "add_search_event",
+        lambda session, user_id, post_id, event_type, query=None: calls.append(
+            (user_id, post_id, event_type, query)
+        ),
+    )
 
     callback = FakeCallback()
     asyncio.run(handlers.similar_callback(callback))
 
-    assert calls == [(callback.message, 8, 0, 1, handlers.SIMILAR_QUERY_ID, "add")]
+    assert calls == [
+        (42, 7, "similar_clicked", None),
+        "commit",
+        (callback.message, 8, 0, 1, handlers.SIMILAR_QUERY_ID, "add"),
+    ]
     assert handlers.user_search_state[42].results == [8]
     assert callback.answer_text is None
 
@@ -353,6 +377,187 @@ def test_similar_callback_answers_when_empty(monkeypatch):
     asyncio.run(handlers.similar_callback(callback))
 
     assert callback.answer_text == "Похожие треды не найдены"
+
+
+def test_feedback_bad_callback_records_disliked_event(monkeypatch):
+    calls = []
+
+    class FakeUser:
+        id = 42
+
+    class FakeCallback:
+        data = "feedback:bad:7"
+        from_user = FakeUser()
+
+        async def answer(self, text=None):
+            self.answer_text = text
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, model, post_id):
+            assert model is Post
+            assert post_id == 7
+            return Post(id=post_id, vk_post_id=1, vk_owner_id=-1, vk_url="https://vk.com/wall-1_1", text="")
+
+        def commit(self):
+            calls.append("commit")
+
+    def fake_add_search_event(session, user_id, post_id, event_type, query=None):
+        calls.append((user_id, post_id, event_type, query))
+
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(handlers, "add_search_event", fake_add_search_event)
+
+    callback = FakeCallback()
+    asyncio.run(handlers.feedback_bad_callback(callback))
+
+    assert calls == [(42, 7, "disliked", None), "commit"]
+    assert callback.answer_text == "Понял, буду показывать меньше похожего"
+
+
+def test_tag_command_requires_admin(monkeypatch):
+    sent_messages = []
+
+    class FakeUser:
+        id = 100
+
+    class FakeMessage:
+        text = "/tag 7 батя"
+        from_user = FakeUser()
+
+        async def answer(self, text, reply_markup=None):
+            sent_messages.append(text)
+
+    monkeypatch.setattr(handlers, "is_admin", lambda user_id: False)
+
+    asyncio.run(handlers.tag_command(FakeMessage()))
+
+    assert sent_messages == ["Admin only."]
+
+
+def test_tag_command_adds_tags_for_admin(monkeypatch):
+    sent_messages = []
+    calls = []
+
+    class FakeUser:
+        id = 42
+
+    class FakeMessage:
+        text = "/tag 7 батя техника"
+        from_user = FakeUser()
+
+        async def answer(self, text, reply_markup=None):
+            sent_messages.append(text)
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, model, post_id):
+            assert model is Post
+            assert post_id == 7
+            return Post(id=post_id, vk_post_id=1, vk_owner_id=-1, vk_url="https://vk.com/wall-1_1", text="")
+
+        def commit(self):
+            calls.append("commit")
+
+    def fake_add_tags_to_post(session, post_id, tag_names):
+        calls.append((post_id, tag_names))
+        return [SimpleNamespace(name=name) for name in tag_names]
+
+    monkeypatch.setattr(handlers, "is_admin", lambda user_id: True)
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(handlers, "add_tags_to_post", fake_add_tags_to_post)
+
+    asyncio.run(handlers.tag_command(FakeMessage()))
+
+    assert calls == [(7, ["батя", "техника"]), "commit"]
+    assert sent_messages == ["Added tags: батя, техника"]
+
+
+def test_untag_command_removes_tags_for_admin(monkeypatch):
+    sent_messages = []
+    calls = []
+
+    class FakeUser:
+        id = 42
+
+    class FakeMessage:
+        text = "/untag 7 техника"
+        from_user = FakeUser()
+
+        async def answer(self, text, reply_markup=None):
+            sent_messages.append(text)
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, model, post_id):
+            assert model is Post
+            assert post_id == 7
+            return Post(id=post_id, vk_post_id=1, vk_owner_id=-1, vk_url="https://vk.com/wall-1_1", text="")
+
+        def commit(self):
+            calls.append("commit")
+
+    def fake_remove_tags_from_post(session, post_id, tag_names):
+        calls.append((post_id, tag_names))
+        return [SimpleNamespace(name="техника")]
+
+    monkeypatch.setattr(handlers, "is_admin", lambda user_id: True)
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(handlers, "remove_tags_from_post", fake_remove_tags_from_post)
+
+    asyncio.run(handlers.untag_command(FakeMessage()))
+
+    assert calls == [(7, ["техника"]), "commit"]
+    assert sent_messages == ["Removed tags: техника"]
+
+
+def test_tags_command_shows_tags(monkeypatch):
+    sent_messages = []
+
+    class FakeMessage:
+        text = "/tags 7"
+        from_user = None
+
+        async def answer(self, text, reply_markup=None):
+            sent_messages.append(text)
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, model, post_id):
+            assert model is Post
+            assert post_id == 7
+            return Post(id=post_id, vk_post_id=1, vk_owner_id=-1, vk_url="https://vk.com/wall-1_1", text="")
+
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(
+        handlers,
+        "get_post_tags",
+        lambda session, post_id: [SimpleNamespace(name="батя"), SimpleNamespace(name="техника")],
+    )
+
+    asyncio.run(handlers.tags_command(FakeMessage()))
+
+    assert sent_messages == ["Tags: батя, техника"]
 
 
 def test_send_post_does_not_block_on_lazy_original_lookup(monkeypatch):

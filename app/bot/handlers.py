@@ -23,13 +23,17 @@ from app.config import get_settings
 from app.db.models import Post
 from app.db.repositories import (
     add_favorite,
+    add_search_event,
     add_search_query,
+    add_tags_to_post,
     find_similar_posts,
     get_favorite_posts,
     get_latest_posts,
+    get_post_tags,
     get_random_post,
     get_search_query,
     remove_favorite,
+    remove_tags_from_post,
     search_posts,
 )
 from app.db.session import get_session
@@ -84,6 +88,13 @@ def _format_check_result(result: CheckResult) -> str:
         f"2ch originals found: {result.originals_found}\n"
         f"Search rebuilt: {'yes' if result.search_rebuilt else 'no'}"
     )
+
+
+def is_admin(user_id: int | None) -> bool:
+    if user_id is None:
+        return False
+    settings = get_settings(require_tokens=False)
+    return user_id in settings.admin_ids
 
 
 def _post_image_paths(post: Post) -> list[str]:
@@ -215,6 +226,92 @@ async def favorites_command(message: Message) -> None:
             return
         user_search_state[user_id] = SearchState(query_id=FAVORITES_QUERY_ID, results=[post.id for post in posts])
         await _send_post(message, posts[0], index=0, total=len(posts), favorite_action="remove")
+
+
+def _parse_tag_command(text: str, command: str) -> tuple[int | None, list[str]]:
+    payload = text.removeprefix(command).strip()
+    parts = payload.split()
+    if not parts:
+        return None, []
+    try:
+        post_id = int(parts[0])
+    except ValueError:
+        return None, []
+    return post_id, parts[1:]
+
+
+@router.message(Command("tag"))
+async def tag_command(message: Message) -> None:
+    settings = get_settings(require_tokens=False)
+    if not settings.enable_tag_commands:
+        await message.answer("Tag commands are disabled.")
+        return
+    if not is_admin(message.from_user.id if message.from_user else None):
+        await message.answer("Admin only.")
+        return
+    post_id, tag_names = _parse_tag_command(message.text or "", "/tag")
+    if post_id is None or not tag_names:
+        await message.answer("Usage: /tag {post_id} {tag1} {tag2} ...")
+        return
+    with get_session() as session:
+        post = session.get(Post, post_id)
+        if post is None:
+            await message.answer("Thread not found")
+            return
+        added = add_tags_to_post(session, post_id, tag_names)
+        session.commit()
+    if added:
+        await message.answer("Added tags: " + ", ".join(tag.name for tag in added))
+    else:
+        await message.answer("No new tags added.")
+
+
+@router.message(Command("untag"))
+async def untag_command(message: Message) -> None:
+    settings = get_settings(require_tokens=False)
+    if not settings.enable_tag_commands:
+        await message.answer("Tag commands are disabled.")
+        return
+    if not is_admin(message.from_user.id if message.from_user else None):
+        await message.answer("Admin only.")
+        return
+    post_id, tag_names = _parse_tag_command(message.text or "", "/untag")
+    if post_id is None or not tag_names:
+        await message.answer("Usage: /untag {post_id} {tag1} {tag2} ...")
+        return
+    with get_session() as session:
+        post = session.get(Post, post_id)
+        if post is None:
+            await message.answer("Thread not found")
+            return
+        removed = remove_tags_from_post(session, post_id, tag_names)
+        session.commit()
+    if removed:
+        await message.answer("Removed tags: " + ", ".join(tag.name for tag in removed))
+    else:
+        await message.answer("No tags removed.")
+
+
+@router.message(Command("tags"))
+async def tags_command(message: Message) -> None:
+    settings = get_settings(require_tokens=False)
+    if not settings.enable_tag_commands:
+        await message.answer("Tag commands are disabled.")
+        return
+    post_id, _ = _parse_tag_command(message.text or "", "/tags")
+    if post_id is None:
+        await message.answer("Usage: /tags {post_id}")
+        return
+    with get_session() as session:
+        post = session.get(Post, post_id)
+        if post is None:
+            await message.answer("Thread not found")
+            return
+        tags = get_post_tags(session, post_id)
+    if tags:
+        await message.answer("Tags: " + ", ".join(tag.name for tag in tags))
+    else:
+        await message.answer("No tags.")
 
 
 @router.message(Command("search"))
@@ -350,6 +447,8 @@ async def favorite_callback(callback: CallbackQuery) -> None:
             answer_text = "Удалено из избранного"
         else:
             add_favorite(session, callback.from_user.id, post_id)
+            if settings.enable_feedback:
+                add_search_event(session, callback.from_user.id, post_id, "favorite_added")
             answer_text = "Добавлено в избранное"
         session.commit()
     await callback.answer(answer_text)
@@ -379,12 +478,44 @@ async def similar_callback(callback: CallbackQuery) -> None:
         if not posts:
             await callback.answer("Похожие треды не найдены")
             return
+        if settings.enable_feedback:
+            add_search_event(session, callback.from_user.id, post_id, "similar_clicked")
+        session.commit()
         user_search_state[callback.from_user.id] = SearchState(
             query_id=SIMILAR_QUERY_ID,
             results=[post.id for post in posts],
         )
         await _send_post(callback.message, posts[0], index=0, total=len(posts), query_id=SIMILAR_QUERY_ID)
     await callback.answer()
+
+
+@router.callback_query(lambda callback: bool(callback.data and callback.data.startswith("feedback:bad:")))
+async def feedback_bad_callback(callback: CallbackQuery) -> None:
+    settings = get_settings(require_tokens=False)
+    if not settings.enable_feedback:
+        await callback.answer("Feedback is disabled.")
+        return
+    if callback.from_user is None or callback.data is None:
+        await callback.answer("Bad callback data.")
+        return
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("Bad callback data.")
+        return
+    try:
+        post_id = int(parts[2])
+    except ValueError:
+        await callback.answer("Bad callback data.")
+        return
+
+    with get_session() as session:
+        post = session.get(Post, post_id)
+        if post is None:
+            await callback.answer("Thread not found")
+            return
+        add_search_event(session, callback.from_user.id, post_id, "disliked")
+        session.commit()
+    await callback.answer("Понял, буду показывать меньше похожего")
 
 
 @router.callback_query(lambda callback: bool(callback.data and callback.data.startswith("result:")))

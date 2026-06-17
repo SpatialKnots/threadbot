@@ -85,3 +85,16 @@ class SearchQuery(Base):
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     query: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class SearchEvent(Base):
+    __tablename__ = "search_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), nullable=False, index=True)
+    query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    post: Mapped[Post] = relationship("Post")

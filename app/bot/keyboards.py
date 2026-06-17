@@ -10,6 +10,7 @@ HELP_BUTTON = "❔ Help"
 FAVORITE_ADD_BUTTON = "⭐ В избранное"
 FAVORITE_REMOVE_BUTTON = "★ Убрать из списка"
 SIMILAR_BUTTON = "🔎 Похожие"
+FEEDBACK_BAD_BUTTON = "👎 Не то"
 
 
 def main_reply_keyboard() -> ReplyKeyboardMarkup:
@@ -74,6 +75,7 @@ def result_keyboard(
         buttons.append(
             [
                 InlineKeyboardButton(text="Image-to-text", callback_data=f"ocr:{post_id}"),
+                InlineKeyboardButton(text=FEEDBACK_BAD_BUTTON, callback_data=f"feedback:bad:{post_id}"),
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
