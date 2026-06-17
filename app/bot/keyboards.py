@@ -7,6 +7,9 @@ SEARCH_BUTTON = "🔎 Search"
 RANDOM_BUTTON = "🎲 Random"
 LATEST_BUTTON = "🕓 Latest"
 HELP_BUTTON = "❔ Help"
+FAVORITE_ADD_BUTTON = "⭐ В избранное"
+FAVORITE_REMOVE_BUTTON = "★ Убрать из списка"
+SIMILAR_BUTTON = "🔎 Похожие"
 
 
 def main_reply_keyboard() -> ReplyKeyboardMarkup:
@@ -42,6 +45,7 @@ def result_keyboard(
     vk_url: str,
     post_id: int | None = None,
     original_url: str = "",
+    favorite_action: str = "add",
 ) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = []
     nav: list[InlineKeyboardButton] = []
@@ -59,5 +63,17 @@ def result_keyboard(
         action_row.append(InlineKeyboardButton(text="Open 2ch", url=original_url))
     buttons.append(action_row)
     if post_id is not None:
-        buttons.append([InlineKeyboardButton(text="Image-to-text", callback_data=f"ocr:{post_id}")])
+        favorite_text = FAVORITE_REMOVE_BUTTON if favorite_action == "remove" else FAVORITE_ADD_BUTTON
+        favorite_callback = f"fav:remove:{post_id}" if favorite_action == "remove" else f"fav:add:{post_id}"
+        buttons.append(
+            [
+                InlineKeyboardButton(text=favorite_text, callback_data=favorite_callback),
+                InlineKeyboardButton(text=SIMILAR_BUTTON, callback_data=f"similar:{post_id}"),
+            ]
+        )
+        buttons.append(
+            [
+                InlineKeyboardButton(text="Image-to-text", callback_data=f"ocr:{post_id}"),
+            ]
+        )
     return InlineKeyboardMarkup(inline_keyboard=buttons)

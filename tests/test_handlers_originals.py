@@ -174,6 +174,187 @@ def test_reply_action_buttons_do_not_run_text_search(monkeypatch):
     assert calls == ["random", "latest"]
 
 
+def test_favorite_callback_adds_favorite(monkeypatch):
+    calls = []
+
+    class FakeUser:
+        id = 42
+
+    class FakeCallback:
+        data = "fav:add:7"
+        from_user = FakeUser()
+
+        async def answer(self, text=None):
+            self.answer_text = text
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, model, post_id):
+            assert model is Post
+            assert post_id == 7
+            return Post(id=post_id, vk_post_id=1, vk_owner_id=-1, vk_url="https://vk.com/wall-1_1", text="")
+
+        def commit(self):
+            calls.append("commit")
+
+    def fake_add_favorite(session, user_id, post_id):
+        calls.append((user_id, post_id))
+
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(handlers, "add_favorite", fake_add_favorite)
+
+    callback = FakeCallback()
+    asyncio.run(handlers.favorite_callback(callback))
+
+    assert calls == [(42, 7), "commit"]
+    assert callback.answer_text == "Добавлено в избранное"
+
+
+def test_favorite_callback_removes_favorite(monkeypatch):
+    calls = []
+
+    class FakeUser:
+        id = 42
+
+    class FakeCallback:
+        data = "fav:remove:7"
+        from_user = FakeUser()
+
+        async def answer(self, text=None):
+            self.answer_text = text
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, model, post_id):
+            assert model is Post
+            assert post_id == 7
+            return Post(id=post_id, vk_post_id=1, vk_owner_id=-1, vk_url="https://vk.com/wall-1_1", text="")
+
+        def commit(self):
+            calls.append("commit")
+
+    def fake_remove_favorite(session, user_id, post_id):
+        calls.append((user_id, post_id))
+
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(handlers, "remove_favorite", fake_remove_favorite)
+
+    callback = FakeCallback()
+    asyncio.run(handlers.favorite_callback(callback))
+
+    assert calls == [(42, 7), "commit"]
+    assert callback.answer_text == "Удалено из избранного"
+
+
+def test_favorites_command_sends_empty_message(monkeypatch):
+    sent_messages = []
+
+    class FakeUser:
+        id = 42
+
+    class FakeMessage:
+        from_user = FakeUser()
+
+        async def answer(self, text, reply_markup=None):
+            sent_messages.append(text)
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(handlers, "get_favorite_posts", lambda session, user_id, limit: [])
+
+    asyncio.run(handlers.favorites_command(FakeMessage()))
+
+    assert sent_messages == ["У тебя пока нет избранных тредов"]
+
+
+def test_similar_callback_sends_first_similar_post(monkeypatch):
+    calls = []
+
+    class FakeUser:
+        id = 42
+
+    class FakeMessage:
+        pass
+
+    class FakeCallback:
+        data = "similar:7"
+        from_user = FakeUser()
+        message = FakeMessage()
+
+        async def answer(self, text=None):
+            self.answer_text = text
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_send_post(message, post, index=0, total=1, query_id=0, favorite_action="add"):
+        calls.append((message, post.id, index, total, query_id, favorite_action))
+
+    post = Post(id=8, vk_post_id=1, vk_owner_id=-1, vk_url="https://vk.com/wall-1_1", text="")
+
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(handlers, "find_similar_posts", lambda session, post_id, limit: [post])
+    monkeypatch.setattr(handlers, "_send_post", fake_send_post)
+
+    callback = FakeCallback()
+    asyncio.run(handlers.similar_callback(callback))
+
+    assert calls == [(callback.message, 8, 0, 1, handlers.SIMILAR_QUERY_ID, "add")]
+    assert handlers.user_search_state[42].results == [8]
+    assert callback.answer_text is None
+
+
+def test_similar_callback_answers_when_empty(monkeypatch):
+    class FakeUser:
+        id = 42
+
+    class FakeMessage:
+        pass
+
+    class FakeCallback:
+        data = "similar:7"
+        from_user = FakeUser()
+        message = FakeMessage()
+
+        async def answer(self, text=None):
+            self.answer_text = text
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(handlers, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(handlers, "find_similar_posts", lambda session, post_id, limit: [])
+
+    callback = FakeCallback()
+    asyncio.run(handlers.similar_callback(callback))
+
+    assert callback.answer_text == "Похожие треды не найдены"
+
+
 def test_send_post_does_not_block_on_lazy_original_lookup(monkeypatch):
     sent = []
 

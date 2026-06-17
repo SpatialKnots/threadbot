@@ -71,6 +71,7 @@ Supported commands:
 - `/search query`
 - `/random`
 - `/latest`
+- `/favorites`
 - `/check`
 
 Any regular text message is treated as a search query.
@@ -78,6 +79,44 @@ Any regular text message is treated as a search query.
 `/check` manually checks VK for new wall posts, stores new thread images, runs
 OCR for newly imported threads, tries to resolve original 2ch links from OCR
 post numbers, and rebuilds local search artifacts when new data was added.
+
+### Favorites
+
+The bot supports saving threads to favorites.
+
+Feature flag:
+
+```env
+THREADBOT_ENABLE_FAVORITES=true
+THREADBOT_ENABLE_SIMILAR=true
+```
+
+Commands:
+
+- `/favorites` - show saved threads.
+
+Buttons:
+
+- `⭐ В избранное` - save current thread.
+- `★ Убрать из списка` - remove a thread while browsing favorites.
+
+Before using this feature on an existing database, run:
+
+```bash
+python scripts/migrations/001_add_favorites.py
+```
+
+### Similar threads
+
+Each result has a `🔎 Похожие` button. It searches for related threads by
+passing the current post text, OCR text, and tags into the existing search
+pipeline.
+
+Feature flag:
+
+```env
+THREADBOT_ENABLE_SIMILAR=true
+```
 
 ## OCR
 

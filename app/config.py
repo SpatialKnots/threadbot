@@ -55,6 +55,8 @@ class Settings:
     startup_fetch_limit: int
     startup_fetch_batch_size: int
     startup_rebuild_search: bool
+    enable_favorites: bool = True
+    enable_similar: bool = True
 
 
 def get_settings(require_tokens: bool = True) -> Settings:
@@ -80,6 +82,8 @@ def get_settings(require_tokens: bool = True) -> Settings:
         startup_fetch_limit=_int_env("STARTUP_FETCH_LIMIT", 100),
         startup_fetch_batch_size=_int_env("STARTUP_FETCH_BATCH_SIZE", 100),
         startup_rebuild_search=_bool_env("STARTUP_REBUILD_SEARCH", True),
+        enable_favorites=_bool_env("THREADBOT_ENABLE_FAVORITES", True),
+        enable_similar=_bool_env("THREADBOT_ENABLE_SIMILAR", True),
     )
 
 

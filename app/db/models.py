@@ -68,6 +68,16 @@ class Tag(Base):
     posts: Mapped[list[Post]] = relationship("Post", secondary=post_tags, back_populates="tags")
 
 
+class Favorite(Base):
+    __tablename__ = "favorites"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    post: Mapped[Post] = relationship("Post")
+
+
 class SearchQuery(Base):
     __tablename__ = "search_queries"
 

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
+import re
 from typing import Iterable, Optional
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.db.models import Image, Post, SearchQuery, Tag
+from app.db.models import Favorite, Image, Post, SearchQuery, Tag
 from app.search.fts import fetch_posts_by_ids, search_fts
 from app.search.normalization import expand_query_tokens, normalize_search_text, tokenize_search_query
 from app.search.semantic import SemanticSearchUnavailable, semantic_search
@@ -42,6 +44,34 @@ class PostSearchResult:
     post: Post
     score: float
     source: str
+
+
+_SIMILAR_STOPWORDS = {
+    "anon",
+    "anonymous",
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "webm",
+    "kb",
+    "mb",
+    "kbpng",
+    "kbjpg",
+    "no",
+    "sage",
+    "аnonim",
+    "аноним",
+    "номер",
+    "файл",
+    "пнд",
+    "втр",
+    "срд",
+    "чтв",
+    "птн",
+    "суб",
+    "вск",
+}
 
 
 def normalize_vk_datetime(timestamp: int | None) -> Optional[datetime]:
@@ -110,6 +140,96 @@ def get_search_query(session: Session, query_id: int, user_id: Optional[int]) ->
     return session.scalar(
         select(SearchQuery).where(SearchQuery.id == query_id, SearchQuery.user_id == user_id)
     )
+
+
+def add_favorite(session: Session, user_id: int, post_id: int) -> None:
+    if is_favorite(session, user_id, post_id):
+        return
+    session.add(Favorite(user_id=user_id, post_id=post_id))
+    session.flush()
+
+
+def remove_favorite(session: Session, user_id: int, post_id: int) -> None:
+    session.execute(delete(Favorite).where(Favorite.user_id == user_id, Favorite.post_id == post_id))
+    session.flush()
+
+
+def is_favorite(session: Session, user_id: int, post_id: int) -> bool:
+    return session.get(Favorite, {"user_id": user_id, "post_id": post_id}) is not None
+
+
+def get_favorite_posts(session: Session, user_id: int, limit: int = 10, offset: int = 0) -> list[Post]:
+    stmt = (
+        select(Post)
+        .join(Favorite, Favorite.post_id == Post.id)
+        .where(Favorite.user_id == user_id)
+        .order_by(Favorite.created_at.desc(), Post.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(session.scalars(_with_post_images(stmt)).all())
+
+
+def _is_similar_query_token(token: str) -> bool:
+    if len(token) < 4 or len(token) > 24:
+        return False
+    if token in _SIMILAR_STOPWORDS:
+        return False
+    if any(char.isdigit() for char in token):
+        return False
+    if re.fullmatch(r"[a-f]+", token) and len(token) >= 8:
+        return False
+    if re.search(r"(.)\1{4,}", token):
+        return False
+    return True
+
+
+def _build_similar_query(post: Post, max_tokens: int = 8) -> str:
+    return " ".join(_rank_similar_query_tokens(post)[:max_tokens])
+
+
+def _rank_similar_query_tokens(post: Post) -> list[str]:
+    token_scores: dict[str, float] = defaultdict(float)
+    first_positions: dict[str, int] = {}
+    position = 0
+
+    for source_weight, text in (
+        (90, " ".join(tag.name for tag in post.tags)),
+        (45, post.text or ""),
+        (12, post.ocr_text or ""),
+    ):
+        for token in tokenize_search_query(text):
+            position += 1
+            if not _is_similar_query_token(token):
+                continue
+            first_positions.setdefault(token, position)
+            token_scores[token] += source_weight + min(len(token), 12)
+
+    return sorted(
+        token_scores,
+        key=lambda token: (-token_scores[token], first_positions[token], token),
+    )
+
+
+def find_similar_posts(session: Session, post_id: int, limit: int = 5) -> list[Post]:
+    post = session.scalar(_with_post_images(select(Post).where(Post.id == post_id)))
+    if post is None:
+        return []
+
+    ranked_tokens = _rank_similar_query_tokens(post)
+    if not ranked_tokens:
+        return []
+
+    token_counts = [8, 6, 4, 3, 2]
+    for token_count in token_counts:
+        query = " ".join(ranked_tokens[:token_count])
+        if not query.strip():
+            continue
+        candidates = search_posts(session, query, limit=limit + 10, offset=0)
+        similar = [candidate for candidate in candidates if candidate.id != post_id][:limit]
+        if similar:
+            return similar
+    return []
 
 
 def _with_post_images(stmt: Select[tuple[Post]]) -> Select[tuple[Post]]:

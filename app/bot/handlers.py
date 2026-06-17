@@ -21,7 +21,17 @@ from app.bot.keyboards import (
 from app.check_updates import CheckResult, check_for_new_threads
 from app.config import get_settings
 from app.db.models import Post
-from app.db.repositories import add_search_query, get_latest_posts, get_random_post, get_search_query, search_posts
+from app.db.repositories import (
+    add_favorite,
+    add_search_query,
+    find_similar_posts,
+    get_favorite_posts,
+    get_latest_posts,
+    get_random_post,
+    get_search_query,
+    remove_favorite,
+    search_posts,
+)
 from app.db.session import get_session
 from app.twoch.originals import extract_2ch_post_numbers, find_original_from_text
 
@@ -30,6 +40,8 @@ router = Router()
 logger = logging.getLogger(__name__)
 check_lock = asyncio.Lock()
 LAZY_ORIGINAL_LOOKUP_TIMEOUT_SECONDS = 4.0
+FAVORITES_QUERY_ID = 0
+SIMILAR_QUERY_ID = -1
 
 
 @dataclass
@@ -46,13 +58,15 @@ WELCOME_TEXT = (
     "/search query - search explicitly\n"
     "/random - random saved thread\n"
     "/latest - latest saved threads\n"
+    "/favorites - saved favorite threads\n"
     "/check - import new VK posts\n"
     "/help - short help"
 )
 SEARCH_HELP_TEXT = "Send a search phrase, or use /search followed by a query."
 HELP_TEXT = (
     "Send text to search saved post text and OCR text. "
-    "Use /random for a random thread, /latest for recent saved threads, and /check to import new threads."
+    "Use /random for a random thread, /latest for recent saved threads, /favorites for saved threads, "
+    "and /check to import new threads."
 )
 
 
@@ -98,10 +112,25 @@ async def _ensure_original_url(post: Post) -> str:
     return original.url
 
 
-async def _send_post(message: Message, post: Post, index: int = 0, total: int = 1, query_id: int = 0) -> None:
+async def _send_post(
+    message: Message,
+    post: Post,
+    index: int = 0,
+    total: int = 1,
+    query_id: int = 0,
+    favorite_action: str = "add",
+) -> None:
     caption = format_post_caption(post, index=index, total=total)
     image_paths = _post_image_paths(post)
-    keyboard = result_keyboard(query_id, index, total, post.vk_url, post_id=post.id, original_url=post.original_url)
+    keyboard = result_keyboard(
+        query_id,
+        index,
+        total,
+        post.vk_url,
+        post_id=post.id,
+        original_url=post.original_url,
+        favorite_action=favorite_action,
+    )
     if len(image_paths) == 1:
         await message.answer_photo(FSInputFile(image_paths[0]), caption=caption, reply_markup=keyboard)
     elif image_paths:
@@ -167,6 +196,25 @@ async def latest_command(message: Message) -> None:
             await message.answer("No saved posts with images yet.")
             return
         await _send_post(message, posts[0], index=0, total=len(posts))
+
+
+@router.message(Command("favorites"))
+async def favorites_command(message: Message) -> None:
+    settings = get_settings(require_tokens=False)
+    if not settings.enable_favorites:
+        await message.answer("Favorites are disabled.")
+        return
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is None:
+        await message.answer("Favorites require a Telegram user.")
+        return
+    with get_session() as session:
+        posts = get_favorite_posts(session, user_id, settings.results_per_page)
+        if not posts:
+            await message.answer("У тебя пока нет избранных тредов")
+            return
+        user_search_state[user_id] = SearchState(query_id=FAVORITES_QUERY_ID, results=[post.id for post in posts])
+        await _send_post(message, posts[0], index=0, total=len(posts), favorite_action="remove")
 
 
 @router.message(Command("search"))
@@ -273,6 +321,72 @@ async def image_to_text_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@router.callback_query(lambda callback: bool(callback.data and callback.data.startswith("fav:")))
+async def favorite_callback(callback: CallbackQuery) -> None:
+    settings = get_settings(require_tokens=False)
+    if not settings.enable_favorites:
+        await callback.answer("Favorites are disabled.")
+        return
+    if callback.from_user is None or callback.data is None:
+        await callback.answer("Bad callback data.")
+        return
+    parts = callback.data.split(":")
+    if len(parts) != 3 or parts[1] not in {"add", "remove"}:
+        await callback.answer("Bad callback data.")
+        return
+    try:
+        post_id = int(parts[2])
+    except ValueError:
+        await callback.answer("Bad callback data.")
+        return
+
+    with get_session() as session:
+        post = session.get(Post, post_id)
+        if post is None:
+            await callback.answer("Thread not found")
+            return
+        if parts[1] == "remove":
+            remove_favorite(session, callback.from_user.id, post_id)
+            answer_text = "Удалено из избранного"
+        else:
+            add_favorite(session, callback.from_user.id, post_id)
+            answer_text = "Добавлено в избранное"
+        session.commit()
+    await callback.answer(answer_text)
+
+
+@router.callback_query(lambda callback: bool(callback.data and callback.data.startswith("similar:")))
+async def similar_callback(callback: CallbackQuery) -> None:
+    settings = get_settings(require_tokens=False)
+    if not settings.enable_similar:
+        await callback.answer("Similar threads are disabled.")
+        return
+    if callback.message is None or callback.from_user is None or callback.data is None:
+        await callback.answer("Bad callback data.")
+        return
+    parts = callback.data.split(":")
+    if len(parts) != 2:
+        await callback.answer("Bad callback data.")
+        return
+    try:
+        post_id = int(parts[1])
+    except ValueError:
+        await callback.answer("Bad callback data.")
+        return
+
+    with get_session() as session:
+        posts = find_similar_posts(session, post_id, settings.results_per_page)
+        if not posts:
+            await callback.answer("Похожие треды не найдены")
+            return
+        user_search_state[callback.from_user.id] = SearchState(
+            query_id=SIMILAR_QUERY_ID,
+            results=[post.id for post in posts],
+        )
+        await _send_post(callback.message, posts[0], index=0, total=len(posts), query_id=SIMILAR_QUERY_ID)
+    await callback.answer()
+
+
 @router.callback_query(lambda callback: bool(callback.data and callback.data.startswith("result:")))
 async def result_callback(callback: CallbackQuery) -> None:
     if callback.message is None or callback.from_user is None or callback.data is None:
@@ -291,6 +405,9 @@ async def result_callback(callback: CallbackQuery) -> None:
     with get_session() as session:
         state = user_search_state.get(callback.from_user.id)
         if state is None or state.query_id != query_id:
+            if query_id <= 0:
+                await callback.answer("Search state expired. Send the command again.")
+                return
             settings = get_settings(require_tokens=False)
             query_row = get_search_query(session, query_id, callback.from_user.id)
             if query_row is None:
@@ -308,5 +425,13 @@ async def result_callback(callback: CallbackQuery) -> None:
         if post is None:
             await callback.answer("Result is no longer available.")
             return
-        await _send_post(callback.message, post, index=index, total=len(state.results), query_id=query_id)
+        favorite_action = "remove" if query_id == FAVORITES_QUERY_ID else "add"
+        await _send_post(
+            callback.message,
+            post,
+            index=index,
+            total=len(state.results),
+            query_id=query_id,
+            favorite_action=favorite_action,
+        )
     await callback.answer()

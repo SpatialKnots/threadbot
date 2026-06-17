@@ -5,14 +5,20 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
-from app.db.models import Base, Tag
+from app.db.models import Base, Post, Tag
 from app.db.repositories import (
     ImageInput,
     PostInput,
+    _build_similar_query,
+    add_favorite,
+    find_similar_posts,
     get_latest_posts,
+    get_favorite_posts,
     get_search_query,
+    is_favorite,
     iter_images_without_ocr,
     add_search_query,
+    remove_favorite,
     search_post_results,
     search_posts,
     upsert_post,
@@ -574,6 +580,203 @@ def test_get_search_query_requires_same_user():
 
     assert get_search_query(session, query.id, user_id=10).query == "needle"
     assert get_search_query(session, query.id, user_id=11) is None
+
+
+def test_add_favorite_is_idempotent():
+    session = make_session()
+    post = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=30,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_30",
+            text="favorite",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/30.jpg", "data/images/30.jpg"),),
+        ),
+    )
+    session.commit()
+
+    add_favorite(session, user_id=10, post_id=post.id)
+    add_favorite(session, user_id=10, post_id=post.id)
+    session.commit()
+
+    assert is_favorite(session, user_id=10, post_id=post.id) is True
+    assert [favorite.id for favorite in get_favorite_posts(session, user_id=10)] == [post.id]
+
+
+def test_remove_favorite_is_idempotent():
+    session = make_session()
+    post = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=31,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_31",
+            text="favorite",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/31.jpg", "data/images/31.jpg"),),
+        ),
+    )
+    session.commit()
+
+    add_favorite(session, user_id=10, post_id=post.id)
+    remove_favorite(session, user_id=10, post_id=post.id)
+    remove_favorite(session, user_id=10, post_id=post.id)
+    session.commit()
+
+    assert is_favorite(session, user_id=10, post_id=post.id) is False
+    assert get_favorite_posts(session, user_id=10) == []
+
+
+def test_get_favorite_posts_orders_by_created_at_desc():
+    session = make_session()
+    older = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=32,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_32",
+            text="older favorite",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/32.jpg", "data/images/32.jpg"),),
+        ),
+    )
+    newer = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=33,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_33",
+            text="newer favorite",
+            published_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/33.jpg", "data/images/33.jpg"),),
+        ),
+    )
+    session.commit()
+
+    add_favorite(session, user_id=10, post_id=older.id)
+    add_favorite(session, user_id=10, post_id=newer.id)
+    session.commit()
+
+    assert [post.id for post in get_favorite_posts(session, user_id=10)] == [newer.id, older.id]
+
+
+def test_find_similar_posts_excludes_current_post():
+    session = make_session()
+    current = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=34,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_34",
+            text="router kitchen family story",
+            published_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/34.jpg", "data/images/34.jpg"),),
+        ),
+    )
+    similar = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=35,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_35",
+            text="router kitchen family joke",
+            published_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/35.jpg", "data/images/35.jpg"),),
+        ),
+    )
+    unrelated = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=36,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_36",
+            text="unrelated train station",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/36.jpg", "data/images/36.jpg"),),
+        ),
+    )
+    network = Tag(name="network")
+    current.tags.append(network)
+    similar.tags.append(network)
+    unrelated.tags.append(Tag(name="transport"))
+    session.commit()
+
+    results = find_similar_posts(session, current.id, limit=5)
+
+    assert [post.id for post in results] == [similar.id]
+    assert current.id not in [post.id for post in results]
+
+
+def test_build_similar_query_filters_ocr_board_noise():
+    post = Post(
+        id=1,
+        vk_post_id=1,
+        vk_owner_id=-1,
+        vk_url="https://vk.com/wall-1_1",
+        text="",
+        ocr_text=(
+            "Anonymous 09/22/18 Sat No.48287782 765 KBPNG "
+            "router kitchen family router kitchen family open door"
+        ),
+    )
+
+    query = _build_similar_query(post)
+
+    assert "anonymous" not in query
+    assert "48287782" not in query
+    assert "kbpng" not in query
+    assert "router" in query
+    assert "kitchen" in query
+    assert "family" in query
+
+
+def test_find_similar_posts_uses_short_signature_query():
+    session = make_session()
+    current = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=37,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_37",
+            text="",
+            published_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/37.jpg", "data/images/37.jpg"),),
+        ),
+    )
+    current.ocr_text = (
+        "Anonymous 09/22/18 Sat No.48287782 765 KBPNG "
+        "door router kitchen family router kitchen family "
+        "oneoffalpha oneoffbravo oneoffcharlie oneoffdelta oneoffecho oneofffoxtrot"
+    )
+    similar = upsert_post(
+        session,
+        PostInput(
+            vk_post_id=38,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_38",
+            text="door router kitchen family",
+            published_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/38.jpg", "data/images/38.jpg"),),
+        ),
+    )
+    upsert_post(
+        session,
+        PostInput(
+            vk_post_id=39,
+            vk_owner_id=-1,
+            vk_url="https://vk.com/wall-1_39",
+            text="train station platform",
+            published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            images=(ImageInput("https://example.com/39.jpg", "data/images/39.jpg"),),
+        ),
+    )
+    session.commit()
+
+    results = find_similar_posts(session, current.id, limit=5)
+
+    assert [post.id for post in results] == [similar.id]
 
 
 def test_search_and_latest_posts_skip_promotional_posts():
